@@ -105,6 +105,28 @@ class EmployeeTest < ActiveSupport::TestCase
     assert_raises(ActiveRecord::NotNullViolation) { employee.update_column(:employee_number, nil) }
   end
 
+  # Salary relationship (3.2)
+  test "current_salary is the record in effect today, never a scheduled one" do
+    travel_to Date.new(2026, 9, 28)
+    employee = create(:employee)
+    assert_nil employee.current_salary
+
+    current = create(:salary_record, employee: employee, effective_from: Date.new(2026, 4, 1), effective_to: Date.new(2026, 12, 31))
+    create(:salary_record, employee: employee, effective_from: Date.new(2027, 1, 1))
+
+    assert_equal current, employee.current_salary
+  end
+
+  # I13, employee side (J10)
+  test "hired_on cannot move after the first salary start date" do
+    employee = create(:employee, hired_on: Date.new(2021, 4, 12))
+    create(:salary_record, employee: employee, effective_from: Date.new(2021, 5, 1))
+
+    assert_not employee.update(hired_on: Date.new(2021, 5, 2))
+    assert employee.errors.of_kind?(:hired_on, :after_first_salary)
+    assert employee.update(hired_on: Date.new(2021, 5, 1))
+  end
+
   test "database rejects an unknown country" do
     employee = create(:employee)
 

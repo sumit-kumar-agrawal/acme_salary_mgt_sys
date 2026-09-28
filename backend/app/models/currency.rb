@@ -2,6 +2,9 @@
 class Currency < ApplicationRecord
   self.primary_key = "code"
 
+  has_many :salary_records, foreign_key: :currency_code, primary_key: :code,
+    inverse_of: :currency, dependent: :restrict_with_exception
+
   normalizes :code, with: ->(code) { code.strip.upcase }
   normalizes :name, with: ->(name) { name.strip }
 

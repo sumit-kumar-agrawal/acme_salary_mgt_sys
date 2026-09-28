@@ -416,29 +416,33 @@ Inputs: `docs/database-design.md` v2.0 (with later updates), ADRs 002, 003, and 
 ### 3.2 Salary records, history services, and employee creation
 **Prompt:** `Implement salary_records per docs/database-design.md §3.6, §4–§7 and ADR 003 (with J7–J13): migration with the generated open_flag column, CHECKs, FKs, and unique indexes; SalaryRecord model with validations I4–I7, I9–I11, I13, the in_effect_on scope, and status helpers; Salaries::ChangeService, Salaries::CorrectionService, and Employees::CreateService with locking and transactions. Do not calculate payroll, tax, or net pay; no endpoints.`
 **Tasks:**
-1. Migration: `salary_records` (amount `DECIMAL(18,4)` with `CHECK > 0`; `currency_code` FK to `currencies.code`; `CHECK effective_to >= effective_from`; virtual stored `open_flag`; unique `(employee_id, effective_from)` and `(employee_id, open_flag)`).
-2. `SalaryRecord` model: validations I4–I7 plus scale versus `minor_units` (J9), overlap (I10), and `effective_from >= hired_on` (I13); `attr_readonly` (J8); `in_effect_on(date)` scope (D7); `status_on(date)` returning `current`, `scheduled`, or `historical`; `editable?` (D4 + O1).
-3. `Employee`: `has_many :salary_records` (restrict); `current_salary`; the I13 employee-side validation (J10).
-4. `Salaries::ChangeService` (design §6: lock the employee, check the latest record, close it, insert the new one), `Salaries::CorrectionService` (lock; editable only; `amount`/`currency_code` only), and `Employees::CreateService` (employee plus optional initial salary in one transaction).
-5. Tests (J11, J12): scale per currency (JPY 0, USD 2, KWD 3); boundary dates; future-dated records are `scheduled`; the database guards fire; change closes the prior period exactly one day earlier; backdating and same-date changes are rejected; rollback leaves no partial state; correction allowed for current and scheduled records and rejected for historical ones; dates are immutable; create with a bad initial salary creates nothing.
-6. Update the database design §3 types (J3) and note that the schema round-trip was verified (J13).
+1. ~~Migration: `salary_records` (amount `DECIMAL(18,4)` with `CHECK > 0`; `currency_code` FK to `currencies.code`; `CHECK effective_to >= effective_from`; virtual stored `open_flag`; unique `(employee_id, effective_from)` and `(employee_id, open_flag)`).~~ Done 2026-09-28.
+2. ~~`SalaryRecord` model: validations I4–I7 plus scale versus `minor_units` (J9), overlap (I10), and `effective_from >= hired_on` (I13); `attr_readonly` (J8); `in_effect_on(date)` scope (D7); `status_on(date)` returning `current`, `scheduled`, or `historical`; `editable?` (D4 + O1).~~ Done 2026-09-28.
+3. ~~`Employee`: `has_many :salary_records` (restrict); `current_salary`; the I13 employee-side validation (J10).~~ Done 2026-09-28.
+4. ~~`Salaries::ChangeService` (design §6: lock the employee, check the latest record, close it, insert the new one), `Salaries::CorrectionService` (lock; editable only; `amount`/`currency_code` only), and `Employees::CreateService` (employee plus optional initial salary in one transaction).~~ Done 2026-09-28.
+5. ~~Tests (J11, J12): scale per currency (JPY 0, USD 2, KWD 3); boundary dates; future-dated records are `scheduled`; the database guards fire; change closes the prior period exactly one day earlier; backdating and same-date changes are rejected; rollback leaves no partial state; correction allowed for current and scheduled records and rejected for historical ones; dates are immutable; create with a bad initial salary creates nothing.~~ Done 2026-09-28.
+6. ~~Update the database design §3 types (J3) and note that the schema round-trip was verified (J13).~~ Done 2026-09-28.
 
 **Deliverables:** Migration, `SalaryRecord` model, three services, a salary factory, model and service tests, and an updated `schema.rb`.
 **Acceptance:** `bin/rails test` passes with every rule I4–I13 and O1 covered; `db:test:prepare` from `schema.rb` keeps the generated column and CHECKs (asserted by tests); RuboCop and Brakeman are clean.
-**Status:** Not Started (all decisions approved; ready on instruction)
+**Status:** Done (2026-09-28). All code implemented and verified: `bin/rails test` 75 runs, 190 assertions, 0 failures (about 1 s); RuboCop 51 files, no offences; Brakeman 0 warnings (2 ignored); `db:migrate:redo STEP=1` leaves `schema.rb` identical.
+
+**K1 — test runner (owner decision 2026-09-28: option 3, parallel runs off).** Once the suite passed the 50-test threshold, plain `bin/rails test` hung. Rails 8.0.5.1's parallel process workers are incompatible with the locked minitest 6.0.6, which removed `Minitest.run_one_method` and the reporter argument of `with_info_handler`: workers died after the first test (DRb `Errno::EBADF`). `test/test_helper.rb` now uses `parallelize(workers: 1)`. Revisit when upgrading Rails (8.1 targets minitest 6). This also makes H4 (per-worker test databases) moot.
 
 ### 3.3 Reference seeds, demo data, and integrity review
 **Prompt:** `Split seeds per J6: idempotent reference-data seeds in db/seeds.rb, and a development-only demo:seed task generating about 10,000 deterministic synthetic employees with salary histories per docs/database-design.md §9. Review every integrity rule against the implemented schema. Document seed and reset commands.`
 **Tasks:**
-1. `db/seeds.rb`: `upsert_all` of countries, departments, and currencies from design §8. Safe to rerun and safe in production.
-2. `lib/tasks/demo.rake` (`demo:seed`, `demo:reset`): refuses unless `Rails.env.development?`; fixed random seed (42); 10,000 employees across all countries and statuses; about 5% paid in USD; about 60% with one record, 38% with 2–4, 2% future-dated, 1% with none; history rows built already closed; `insert_all` in batches of 1,000 inside one transaction; refuses if employees exist unless reset.
-3. Integrity review: a table of I1–I13 → where it is enforced → which test proves it; any gaps fixed or recorded.
-4. Verify after seeding: counts per country, currency, and status; zero overlapping periods (SQL check); at most one open record per employee; scale matches `minor_units`; runtime recorded.
-5. README "Sample data" section with the seed, demo, and reset commands.
+1. ~~`db/seeds.rb`: `upsert_all` of countries, departments, and currencies from design §8. Safe to rerun and safe in production.~~ Done 2026-09-28.
+2. ~~`lib/tasks/demo.rake` (`demo:seed`, `demo:reset`): refuses unless `Rails.env.development?`; fixed random seed (42); 10,000 employees across all countries and statuses; about 5% paid in USD; about 60% with one record, 38% with 2–4, 2% future-dated, 1% with none; history rows built already closed; `insert_all` in batches of 1,000 inside one transaction; refuses if employees exist unless reset.~~ Done 2026-09-28.
+3. ~~Integrity review: a table of I1–I13 → where it is enforced → which test proves it; any gaps fixed or recorded.~~ Done 2026-09-28.
+4. ~~Verify after seeding: counts per country, currency, and status; zero overlapping periods (SQL check); at most one open record per employee; scale matches `minor_units`; runtime recorded.~~ Done 2026-09-28.
+5. ~~README "Sample data" section with the seed, demo, and reset commands.~~ Done 2026-09-28.
 
 **Deliverables:** Reference seeds, demo seed task, integrity checklist, and README instructions.
 **Acceptance:** `db:seed` is idempotent (a second run changes 0 rows); `demo:seed` produces the same counts on every run; the SQL integrity checks return zero violations; `demo:seed` refuses to run in production.
-**Status:** Not Started
+**Status:** Done (2026-09-28). `db:seed` twice leaves identical `CHECKSUM TABLE` values (0 rows changed). `demo:seed`: 10,000 employees and 16,826 salary records in about 1.5 s, 0 violations in all 6 integrity checks. `demo:reset` reproduces the same data fingerprint. `demo:seed` and `demo:reset` refuse in production. `bin/rails test` 89 runs, 224 assertions, 0 failures; RuboCop 59 files clean; Brakeman 0 warnings. Integrity checklist: `docs/database-design.md` §12.
+
+**Phase 3 gate: passed on 2026-09-28.**
 
 **Phase gate:** Schema and domain behaviour are verified by model and service tests, the constraints survive the `schema.rb` round-trip, reference seeds are idempotent, and demo data loads deterministically with zero integrity violations.
 
@@ -588,14 +592,16 @@ Inputs: `docs/database-design.md` v2.0 (with later updates), ADRs 002, 003, and 
 | 2026-09-28 | 3.1 | Added factory_bot_rails (test) and faker (dev/test). Migrations for countries, departments, currencies (string PK `code`), employees (FKs, CHECK on status, indexes). Models with normalisation, enum, validations, restrict-delete. Reference fixtures (8 countries, 8 departments, 7 currencies), employee factory, 34 model tests. Database design §3 types updated to VARCHAR (J3) and §9 now uses `insert_all!`; ADR 005 lists the new gems | `bundle install` added only factory_bot 6.6.0, factory_bot_rails 6.5.1, faker 3.8.0. `db:migrate` (dev), `db:test:prepare` (test tables and 2 CHECK constraints present), `db:migrate:redo STEP=4` (schema.rb identical). `bin/rails test`: 37 runs, 79 assertions, 0 failures (3 initial failures fixed: MySQL `insert_all` skips duplicates, switched tests to `insert_all!`). `bin/rubocop`: 41 files, no offences. `bin/brakeman`: 0 warnings, 2 ignored | Owner: confirm the J3/J4/J5/J14 defaults; commit |
 | 2026-09-28 | 3 (J decisions) | Owner approved J3 (VARCHAR codes), J4 (string-backed status enum), J5 (normalisation), and J14 (restrict-delete), all already implemented in 3.1 | Plan update only | J6–J13 (mostly 3.2 and 3.3) not yet explicitly confirmed |
 | 2026-09-28 | 3 (J decisions) | Owner approved J6–J13: seed split (J6), salary services in 3.2 (J7), read-only columns (J8), scale vs `minor_units` (J9), I13 both directions in 3.2 (J10), direct DB-guard tests (J11), `travel_to` in date tests (J12), `schema.rb` with round-trip checks (J13). All Phase 3 decisions are now resolved | Plan update only | — |
+| 2026-09-28 | 3.2 | Migration `salary_records` (DECIMAL(18,4), stored virtual `open_flag`, unique `(employee_id, effective_from)` and `(employee_id, open_flag)`, FKs to employees and `currencies.code`, CHECKs amount > 0 and period order). `SalaryRecord` (I4–I7, I10, I13 validations, raw-input scale check J9, `attr_readonly` J8, `in_effect_on`, `status_on`, `editable?`). `Employee` `has_many :salary_records` (restrict), `current_salary`, I13 employee side (J10); `Currency` `has_many :salary_records` (restrict). Services: `Salaries::ChangeService`, `Salaries::CorrectionService`, `Employees::CreateService` (savepoint transactions, employee row lock). Salary factory; 38 new model and service tests | `db:migrate`; `SHOW INDEX` lists exactly PK plus the 3 planned indexes; `db:test:prepare`; serial `bin/rails test` ×3 seeds: 75 runs, 190 assertions, 0 failures; RuboCop 51 files clean; Brakeman 0 warnings; `db:migrate:redo STEP=1` leaves schema.rb identical. **Parallel `bin/rails test` hangs** (Rails 8.0.5.1 vs minitest 6.0.6) | Owner: decide K1; then re-run `bin/rails test` and close 3.2 |
+| 2026-09-28 | 3.2 (K1, close) | Owner chose K1 option 3: `parallelize(workers: 1)` in `test/test_helper.rb`. README testing and setup notes updated (no per-worker databases). 3.2 marked Done | Plain `bin/rails test`: 75 runs, 190 assertions, 0 failures in about 1 s; RuboCop on `test_helper.rb` clean | Revisit parallel tests after a Rails 8.1 upgrade |
+| 2026-09-28 | 3.3 | `lib/reference_data.rb` (single source for design §8; idempotent `seed!`); `db/seeds.rb` calls it; `lib/demo/seeder.rb` (deterministic 10k generator, seed 42, fixed as-of 2026-09-28, `insert_all!` batches, one transaction); `lib/demo/integrity_check.rb` (6 SQL checks and a summary); `lib/tasks/demo.rake` (`demo:seed`, `demo:reset` development only; `demo:verify` read-only); 14 tests in `test/lib/`. Database design §9 rewritten with actual counts; new §12 integrity checklist I1–I13; README "Sample data" section. Phase 3 gate passed | Dev DB: `db:seed` ×2 identical checksums; `demo:seed` 10,000 employees, 16,826 records, 1.5 s, 0 violations; refuses when employees exist; `demo:reset` same fingerprint (432578cbe2b388cf); `demo:verify` clean; production refusal for seed and reset. `bin/rails test` 89 runs, 224 assertions, 0 failures; RuboCop 59 files clean; Brakeman 0 warnings | I12 "no destroy routes" to verify in Phase 4. The development DB now holds demo data |
 
 ## Current progress
 - **Phase 1** — Backend requirements and design — **Done (gate passed 2026-09-28)**
 - **Phase 2** — Repository and Rails foundation — **Done (gate passed 2026-09-28)**. 2.1, 2.2, 2.3 Done. Carried-over follow-ups: README health line; `db:prepare` (owner).
-- **Phase 3** — Domain models and persistence — reviewed 2026-09-28; tasks 3.1–3.3 proposed.
-- **Current subphases:** 3.1 Done (2026-09-28); 3.2 and 3.3 Not Started.
-- **Next subphase:** 3.2 — Salary records, history services, and employee creation (awaiting instruction)
-- **Overall status:** Phases 1–2 complete
+- **Phase 3** — Domain models and persistence — **Done (gate passed 2026-09-28)**. 3.1, 3.2, 3.3 Done.
+- **Next subphase:** 4.1 — Authentication and authorization foundation (Not Started; Phase 4 not yet reviewed)
+- **Overall status:** Phases 1–3 complete
 
 ## Future work
 Frontend phases will be added after the backend/API scope and implementation are complete or stable.

@@ -135,7 +135,7 @@ Employees are never deleted; termination is a status change (D13). Country and d
 | `effective_to` | DATE | yes | NULL = open-ended; `CHECK (effective_to IS NULL OR effective_to >= effective_from)`; set only by `Salaries::ChangeService` when closing a period |
 | `open_flag` | TINYINT | yes | `GENERATED ALWAYS AS (IF(effective_to IS NULL, 1, NULL)) STORED`; supports the one-open-record index |
 
-Rails: `t.virtual :open_flag, type: :integer, as: "IF(effective_to IS NULL, 1, NULL)", stored: true`; `attr_readonly :employee_id, :effective_from`.
+Rails (implemented in 3.2, `db/migrate/20260928100005_create_salary_records.rb`): `t.virtual :open_flag, type: :integer, limit: 1, as: "IF(effective_to IS NULL, 1, NULL)", stored: true`; `attr_readonly :employee_id, :effective_from`. The indexes are added before the foreign keys, so MySQL creates no extra FK indexes. **Schema round-trip verified (J13):** `schema.rb` keeps the virtual column and both CHECK constraints, and tests against the test database (built from `schema.rb`) prove the open-flag index and CHECKs fire.
 
 ## 4. Indexes
 
@@ -285,19 +285,32 @@ JPY and KWD are included on purpose, to exercise 0- and 3-decimal precision (D10
 
 Departments: Engineering, Finance, Human Resources, Marketing, Operations, Sales, Legal, Customer Support.
 
-## 9. Synthetic seed strategy
+## 9. Seed strategy (implemented in 3.3)
 
-- **Deterministic:** a fixed random seed for Faker and Ruby's `Random` (42), so every run produces the same data.
-- **Volume:** 10,000 employees; about 18,000 salary records.
-- **Distribution:**
-  - Employees are spread across all 8 countries.
-  - About 95% are paid in their country's currency and about 5% in USD (D11: the salary currency is not tied to the employee's country).
-  - Statuses: about 90% active, 4% on leave, 6% terminated.
-  - About 60% of employees have one salary record, about 38% have two to four, about 2% have a future-dated raise (D6), and about 1% have no salary (D14).
-  - Monthly amounts fall in plausible ranges per currency and respect each currency's minor units.
-- **Loading:** reference data via `upsert_all` keyed on `code`/`name`. Employees and salaries via **`insert_all!`** in batches of 1,000, all in one transaction. On MySQL, plain `insert_all` silently skips rows that hit a unique key (`ON DUPLICATE KEY UPDATE` no-op), which would hide generator bugs (found in 3.1). History rows are generated already closed, so they satisfy I7–I10 without going through the service.
-- **Re-runs:** `db:seed` stops with a clear message if employees already exist. `SEED_RESET=1 bin/rails db:seed` truncates the domain tables first (development only; it refuses to run in production). `users` is never touched.
-- **Tests:** tests use FactoryBot factories, never the seed file.
+Seeds are split into reference data and demo data (J6).
+
+**Reference data**
+- Defined once in `backend/lib/reference_data.rb` (the §8 values, plus each country's home currency).
+- `bin/rails db:seed` calls `ReferenceData.seed!`, which runs `upsert_all` on MySQL (`ON DUPLICATE KEY UPDATE`).
+- Idempotent: a second run changes no rows (verified by identical `CHECKSUM TABLE` values). Safe in every environment, including production. Needs no Faker.
+- The test fixtures hold the same values, and a test asserts they match.
+
+**Demo data (development only)**
+- `bin/rails demo:seed` runs `Demo::Seeder` (`backend/lib/demo/seeder.rb`).
+- Deterministic: random seed 42 for Ruby's `Random` and Faker, plus a **fixed as-of date of 2026-09-28**, so every run produces identical rows (verified by a data fingerprint before and after `demo:reset`).
+- Volume and distribution of a run (actual counts):
+  - 10,000 employees and 16,826 salary records, loaded in about 1.5 s.
+  - Employees per country: 1,211–1,294 in each of the 8 countries.
+  - Statuses: 9,046 active, 383 on leave, 571 terminated.
+  - Current salaries per currency: EUR 2,343; USD 1,689 (US plus about 5% of other employees paid in USD, D11); GBP 1,140; INR 1,156; JPY 1,201; KWD 1,213; SGD 1,163.
+  - Records per employee: 1 → 6,207; 2 → 1,517; 3 → 1,168; 4 → 984; 5 → 29.
+  - 95 employees with no salary (D14); 200 scheduled (future-dated) records (D6).
+  - Monthly amounts are drawn from per-currency ranges and rounded to the currency's minor units. Raises are 2–12% every 6–24 months, starting on or after the hire date.
+- Loading: history rows are generated already closed (`effective_to` = next start − 1). Employees and salaries are inserted with **`insert_all!`** in batches of 1,000 in one transaction; plain `insert_all` silently skips unique-key conflicts on MySQL (found in 3.1).
+- Re-runs: `demo:seed` refuses if employees exist. `bin/rails demo:reset` deletes all salary records and employees, then seeds again. Both refuse unless `Rails.env.development?`. Reference data and `users` are never deleted.
+- `bin/rails demo:verify` runs the §12 checks read-only in any environment.
+
+**Tests** build their own data with FactoryBot and fixtures, never the seed files. The seeder is tested with 300 employees.
 
 ## 10. Trade-offs
 
@@ -315,3 +328,25 @@ Departments: Engineering, Finance, Human Resources, Marketing, Operations, Sales
 - **I13 (approved):** `effective_from` must not precede `hired_on` when `hired_on` is present.
 - **O1 (approved):** besides the record in effect today, a **future-dated** record (with `effective_from` after today) can have its `amount` and `currency_code` corrected, because it has not taken effect yet and is not history. Dates remain read-only. A future record with a wrong start date cannot be fixed in v1; this limitation is documented.
 - **Termination:** setting an employee to `terminated` does not close their open salary record. They drop out of analytics through the status filter instead.
+
+## 12. Integrity verification (3.3)
+
+Each rule, where it is enforced, and the test that proves it. The SQL checks in `backend/lib/demo/integrity_check.rb` (`bin/rails demo:verify`) re-check I4, I5, I7, I9, I10, and I13 against any data. They returned 0 violations on the 10,000-employee demo data.
+
+| Rule | Enforced by | Proven by (backend/test/…) |
+|---|---|---|
+| I1 unique employee number | UNIQUE index; model format and uniqueness | `models/employee_test.rb`: unique number, DB rejects duplicate |
+| I2 valid country and department | FK, NOT NULL; `belongs_to` | `models/employee_test.rb`: required references, DB rejects unknown country |
+| I3 allowed status | CHECK; enum `validate: true` | `models/employee_test.rb`: documented statuses, DB check constraint |
+| I4 amount > 0 | CHECK; numericality | `models/salary_record_test.rb`: positive amount, DB checks; integrity SQL |
+| I5 scale ≤ minor units | Model (raw input); integrity SQL | `models/salary_record_test.rb`: JPY, USD, KWD, beyond column scale; `services/salaries/correction_service_test.rb`: currency switch; `lib/demo/integrity_check_test.rb` |
+| I6 currency exists | FK to `currencies.code`; `belongs_to` | `models/salary_record_test.rb`: existing currency, DB FK |
+| I7 period order | CHECK; comparison | `models/salary_record_test.rb`: `effective_to` ≥ `effective_from`, DB checks |
+| I8 one record per start date | UNIQUE `(employee_id, effective_from)` | `models/salary_record_test.rb`: same start date; `services/salaries/change_service_test.rb`: same-date rejected |
+| I9 one open record | Generated `open_flag` + UNIQUE | `models/salary_record_test.rb`: open flag, only one open record; integrity SQL |
+| I10 no overlapping periods | `ChangeService` under row lock; model validation; integrity SQL | `models/salary_record_test.rb`: overlap; `services/salaries/change_service_test.rb`; `lib/demo/integrity_check_test.rb` |
+| I11 history immutable, dates read-only | `attr_readonly`; `CorrectionService` | `models/salary_record_test.rb`: read-only columns; `services/salaries/correction_service_test.rb` |
+| I12 no hard deletes | FK (RESTRICT); `restrict_with_exception` | `models/country_test.rb`, `department_test.rb`, `salary_record_test.rb`. No destroy routes: to be verified in Phase 4 |
+| I13 salary not before hire | Model (both sides); integrity SQL | `models/salary_record_test.rb`, `models/employee_test.rb`, `services/salaries/change_service_test.rb`, `services/employees/create_service_test.rb`, `lib/demo/integrity_check_test.rb` |
+
+Open gap: I12's "no destroy routes" belongs to the API and is checked in Phase 4. No other gaps.

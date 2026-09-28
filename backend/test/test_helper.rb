@@ -4,8 +4,9 @@ require "rails/test_help"
 
 module ActiveSupport
   class TestCase
-    # Run tests in parallel with specified workers
-    parallelize(workers: :number_of_processors)
+    # Parallel runs are off (BACKEND_PLAN.md K1): Rails 8.0's process workers are incompatible with
+    # minitest 6 (workers die after the first test and the run hangs). Revisit after upgrading Rails.
+    parallelize(workers: 1)
 
     # Setup all fixtures in test/fixtures/*.yml for all tests in alphabetical order.
     fixtures :all

@@ -5,6 +5,7 @@ class Employee < ApplicationRecord
 
   belongs_to :country
   belongs_to :department
+  has_many :salary_records, dependent: :restrict_with_exception
 
   enum :employment_status,
     { active: "active", on_leave: "on_leave", terminated: "terminated" },
@@ -19,4 +20,22 @@ class Employee < ApplicationRecord
   validates :first_name, :last_name, presence: true, length: { maximum: 100 }
   validates :email, length: { maximum: 255 }, format: { with: URI::MailTo::EMAIL_REGEXP },
     uniqueness: { case_sensitive: false }, allow_nil: true
+  validate :hired_on_not_after_first_salary
+
+  # The salary record in effect on `date` (D7), or nil.
+  def current_salary(date = Date.current)
+    salary_records.in_effect_on(date).first
+  end
+
+  private
+
+  # I13, employee side (J10): moving hired_on must not leave a salary starting before hire.
+  def hired_on_not_after_first_salary
+    return if new_record? || hired_on.blank? || !will_save_change_to_hired_on?
+
+    first_start = salary_records.minimum(:effective_from)
+    return if first_start.nil? || hired_on <= first_start
+
+    errors.add(:hired_on, :after_first_salary, message: "must not be after the first salary start date")
+  end
 end

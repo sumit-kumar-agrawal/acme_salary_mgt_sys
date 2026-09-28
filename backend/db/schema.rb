@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_28_100004) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_28_100005) do
   create_table "countries", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
     t.string "code", limit: 2, null: false
     t.string "name", limit: 100, null: false
@@ -55,6 +55,24 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_28_100004) do
     t.check_constraint "`employment_status` in (_utf8mb4'active',_utf8mb4'on_leave',_utf8mb4'terminated')", name: "employees_employment_status_valid"
   end
 
+  create_table "salary_records", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
+    t.bigint "employee_id", null: false
+    t.decimal "amount", precision: 18, scale: 4, null: false
+    t.string "currency_code", limit: 3, null: false
+    t.date "effective_from", null: false
+    t.date "effective_to"
+    t.virtual "open_flag", type: :integer, limit: 1, as: "if((`effective_to` is null),1,NULL)", stored: true
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["currency_code"], name: "index_salary_records_on_currency_code"
+    t.index ["employee_id", "effective_from"], name: "index_salary_records_on_employee_id_and_effective_from", unique: true
+    t.index ["employee_id", "open_flag"], name: "index_salary_records_on_employee_id_and_open_flag", unique: true
+    t.check_constraint "(`effective_to` is null) or (`effective_to` >= `effective_from`)", name: "salary_records_period_order"
+    t.check_constraint "`amount` > 0", name: "salary_records_amount_positive"
+  end
+
   add_foreign_key "employees", "countries"
   add_foreign_key "employees", "departments"
+  add_foreign_key "salary_records", "currencies", column: "currency_code", primary_key: "code"
+  add_foreign_key "salary_records", "employees"
 end

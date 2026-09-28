@@ -47,7 +47,7 @@ Docker support is planned for a later phase.
    | `DB_USERNAME` | `salary_app` | MySQL user |
    | `DB_PASSWORD` | *(your password)* | MySQL password |
 
-   A dedicated MySQL user is recommended over `root`. It needs rights on `salary_management` and on `salary_management_test%`: tests run in parallel, and Rails creates one test database per worker.
+   A dedicated MySQL user is recommended over `root`. It needs rights on `salary_management` and `salary_management_test`.
 
 3. **Create the databases** (the first time only)
 
@@ -56,6 +56,19 @@ Docker support is planned for a later phase.
    ```
 
    See `BACKEND_PLAN.md` task 2.2 (H3) before the first run: development and test are to use only the primary database.
+
+## Sample data
+
+Run from `backend/`:
+
+```bash
+bin/rails db:seed        # reference data (countries, departments, currencies); idempotent, safe anywhere
+bin/rails demo:seed      # development only: 10,000 synthetic employees with salary histories (~2 s)
+bin/rails demo:reset     # development only: delete employees and salaries, then demo:seed again
+bin/rails demo:verify    # read-only counts and integrity checks (overlaps, open records, scale, hire date)
+```
+
+Demo data is synthetic and deterministic (fixed seed, as-of date 2026-09-28): every run produces the same rows. `demo:seed` refuses if employees already exist. Both demo tasks refuse to run outside development.
 
 ## Running
 
@@ -78,7 +91,7 @@ bin/brakeman --no-pager                                 # static security scan
 ```
 
 - Tests use the `salary_management_test` database, which must exist first (`bin/rails db:test:prepare`).
-- Minitest runs in parallel only once the suite reaches 50 tests. It then creates one database per worker (`salary_management_test-0`, `-1`, …), so the MySQL user needs `CREATE` rights on `salary_management_test%`.
+- Tests run in a single process (`parallelize(workers: 1)` in `test/test_helper.rb`). Rails 8.0's parallel workers are incompatible with minitest 6 and hang (see `BACKEND_PLAN.md` K1). The whole suite takes about a second.
 - Integration tests live in `test/integration/`, and model, service, and query tests in `test/models`, `test/services`, and `test/queries`.
 - The latest baseline results (test counts, RuboCop offences, Brakeman warnings) are recorded in the `BACKEND_PLAN.md` completion log.
 
