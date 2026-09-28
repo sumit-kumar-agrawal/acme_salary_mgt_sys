@@ -1,6 +1,6 @@
 ---
 paths:
-  - "backend/spec/**/*.rb"
+  - "backend/test/**/*.rb"
   - "frontend/**/*.{test,spec}.{js,jsx,ts,tsx}"
 ---
 

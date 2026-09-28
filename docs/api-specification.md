@@ -504,7 +504,7 @@ The CSV takes the same parameters, except `page` and `per_page`, which are ignor
 
 No payroll, tax, disbursement, integration, or bulk-import endpoints exist.
 
-## 12. Request-spec expectations
+## 12. Integration test expectations (Minitest)
 
 - **Auth:** every protected route returns `401` without a session. Login succeeds and fails with a generic message. Rate limiting returns `429`. Missing CSRF returns `422`. Logout ends the session. Session expiry returns `401`.
 - **Employees:** required fields and formats; unique number and email; filter combinations; sort allowlist (`400` otherwise); `per_page` cap; list payload has no salary and no email; transactional create with `initial_salary` (a failed salary means no employee is created); no delete route.

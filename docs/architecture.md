@@ -1,18 +1,20 @@
 # Salary Management System — Backend Architecture
 
 **Status:** Approved design for backend implementation (BACKEND_PLAN.md task 1.2)  
-**Version:** 2.0 (2026-09-28)  
+**Version:** 2.1 (2026-09-28; updated for the generated Rails 8 application)  
 **Scope:** Rails REST API and MySQL. The React frontend is a future client and is planned separately.
+
+> **Open decision G1 (BACKEND_PLAN.md Phase 2):** the generated `backend/` is a full-stack Rails 8 app (Propshaft, importmap, Turbo, Stimulus, HTML layouts). This document assumes API-only JSON endpoints, so the frontend gems stay unused until G1 is decided.
 
 Decision IDs (Dn, Cn) refer to `BACKEND_PLAN.md` Phase 1 findings; approved decisions are summarised in `docs/requirements.md` §10.
 
 ## 1. Architectural approach
 
-A **modular monolith**: one Rails API application (Puma) and one MySQL database. Code is organised by business capability inside a single deployable. There are no separate services, no message broker, and no cache or job infrastructure. Redis and Sidekiq remain excluded until a measured need exists (see §9).
+A **modular monolith**: one Rails API application (Puma) and one MySQL database. Code is organised by business capability inside a single deployable. There are no separate services and no message broker. The Rails 8 defaults Solid Cache and Solid Queue keep caching and background jobs inside MySQL, so no extra infrastructure is needed. Redis and Sidekiq remain excluded (see §9).
 
 ```mermaid
 flowchart LR
-    Client["HTTP client<br/>(future React app, curl, specs)"] -->|"HTTPS · JSON / CSV<br/>session cookie + CSRF token"| MW
+    Client["HTTP client<br/>(future React app, curl, tests)"] -->|"HTTPS · JSON / CSV<br/>session cookie + CSRF token"| MW
 
     subgraph API["Rails API (single process)"]
         MW["Middleware<br/>cookies · session · param filtering"] --> BASE["Api::V1::BaseController<br/>Authentication · ErrorHandling · Pagination"]
@@ -21,7 +23,7 @@ flowchart LR
         BASE --> REF["Reference data<br/>Countries · Departments · Currencies"]
         BASE --> SAL["Salary history<br/>SalaryRecordsController<br/>Salaries::ChangeService · Salaries::CorrectionService"]
         BASE --> ANA["Analytics & reports<br/>AnalyticsController · Reports::SalariesController<br/>Analytics::* queries · SalaryReportQuery"]
-        SER["Serializers (POROs)"]
+        SER["Jbuilder views<br/>app/views/api/v1"]
         EMP & SAL & ANA & REF & AUTH -.-> SER
     end
 
@@ -57,15 +59,15 @@ backend/app/
     api/v1/reports/salaries_controller.rb  # JSON + CSV formats
     concerns/authentication.rb          # require_login, current_user, session expiry
     concerns/error_handling.rb          # rescue_from → error envelope
-    concerns/pagination.rb              # page/per_page parsing, meta
+    concerns/pagination.rb              # wraps pagy: validates page/per_page (1–100), builds meta
   models/            user, employee, salary_record, country, department, currency
   services/          employees/create_service, salaries/change_service, salaries/correction_service
   queries/           employee_search_query, salary_report_query, analytics/{summary,distribution,breakdown}_query
-  serializers/       plain Ruby serializers per resource
+  views/api/v1/      jbuilder templates per resource, plus shared partials (_error, _pagination_meta, _money)
 backend/lib/tasks/   hr_user.rake (provision HR user from ENV), synthetic seed generator
 ```
 
-Guidelines: controllers parse and permit parameters, call a model, service, or query, and render through a serializer. Services exist only for multi-step writes. Queries exist for any read with joins, aggregates, or dynamic filters. No abstraction is added for single-line operations.
+Guidelines: controllers parse and permit parameters, call a model, service, or query, and render a jbuilder view (`.claude/rules/backend.md`). Pagination uses `pagy` behind the `Pagination` concern, so the response `meta` shape stays as documented in the API spec §2.3. Services exist only for multi-step writes. Queries exist for any read with joins, aggregates, or dynamic filters. No abstraction is added for single-line operations.
 
 ## 4. Main request flows
 
@@ -180,16 +182,16 @@ Every error uses one envelope, rendered by the `ErrorHandling` concern:
 
 ## 9. Deployment assumptions and trade-offs
 
-- **Assessment runtime:** local development with Ruby, Bundler, and MySQL 8.0.16 or later (needed for enforced CHECK constraints). Docker Compose, if added, runs MySQL only.
+- **Assessment runtime:** local development with Ruby (RVM), Bundler, and a local MySQL 8.0.16 or later (needed for enforced CHECK constraints). Connection settings come from `backend/.env`, loaded by `dotenv-rails`. Docker support is deferred by the owner. The generated `Dockerfile`, Kamal, and Thruster files are unused until then (G3).
 - **Production-like environment (assumed, not specified):** a single Puma process behind a TLS-terminating proxy, with `config.force_ssl = true` and secrets supplied through environment variables. No multi-region deployment, replicas, or cache servers.
-- **Rate-limit store:** `rate_limit` uses `Rails.cache`. The default cache store is enough for a single process on a single host. If several hosts are introduced, prefer a MySQL-backed store (for example, Solid Cache, which would need an ADR) before considering Redis.
-- **Versions and libraries:** Ruby 3.1.2 and Rails 7.2 (ADR 005).
+- **Cache, queue, and rate-limit store:** Solid Cache backs `Rails.cache`, and therefore the login `rate_limit`. Solid Queue is the Active Job adapter (no jobs planned). Both use MySQL tables; in development they share the primary database (`db/cache_schema.rb`, `db/queue_schema.rb`). Tests use `:memory_store` for rate-limit tests.
+- **Versions and libraries:** Ruby 3.2.0 and Rails 8.0.5; the gem list and its justifications are in ADR 005.
 
 | Concern | Design response | Trade-off accepted |
 |---|---|---|
 | ~10k employees | Pagination, targeted indexes, SQL aggregates | No caching layer; re-evaluate after measurement in Phase 6 |
 | Salary integrity | Row lock + transaction + DB constraints | Mid-history inserts rejected in v1 (D8) |
-| Median on MySQL | Window-function query in one query object | More complex SQL than PostgreSQL's `percentile_cont`; covered by known-data specs |
+| Median on MySQL | Window-function query in one query object | More complex SQL than PostgreSQL's `percentile_cont`; covered by known-data tests |
 | Export size | Synchronous, streamed, capped at 10k rows | No background export; revisit only if the cap proves insufficient |
 | Single user auth | Session cookie + CSRF | Not suited to third-party API clients (not required) |
 

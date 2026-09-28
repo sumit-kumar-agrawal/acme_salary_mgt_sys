@@ -25,6 +25,6 @@ Implementation:
 
 After implementation:
 
-- Run relevant RSpec tests.
+- Run relevant Minitest tests (`bin/rails test <path>`).
 - Report changed files and test results.
 - Identify any assumptions or unresolved questions.

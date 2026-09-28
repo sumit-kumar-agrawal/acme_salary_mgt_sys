@@ -9,14 +9,15 @@ description: Plan, implement, and review automated tests for the Salary Manageme
 Create a reliable, maintainable test strategy. Verify observable behavior and business rules, especially salary history, authorization, and currency-safe analytics.
 
 ## Project context
-- Frontend: React + Bootstrap; backend: Rails REST API; database: PostgreSQL.
+- Frontend: React + Bootstrap; backend: Rails 8 REST API; database: MySQL.
+- Backend test framework: Minitest (`backend/test/`), run with `bin/rails test`.
 - Target dataset: approximately 10,000 employees.
 - Initial user: HR Manager.
 - In scope: employee and salary record management, salary history, filters, and structured compensation analytics.
 - Out of scope: payroll processing, tax/statutory calculations, salary disbursement, external HRMS/banking integrations, and conversational AI.
 
 ## Workflow
-1. Read `CLAUDE.md`, relevant `.claude/rules/`, `PROJECT_DEV_PLAN.md`, and applicable `docs/`.
+1. Read `CLAUDE.md`, relevant `.claude/rules/`, `BACKEND_PLAN.md`, and applicable `docs/`.
 2. Identify acceptance criteria before writing tests.
 3. Choose the lowest test level that verifies the behavior; add higher-level tests for critical journeys.
 4. Add tests alongside implementation.
@@ -27,10 +28,10 @@ Create a reliable, maintainable test strategy. Verify observable behavior and bu
 
 ## Test layers
 
-### Rails model and domain tests (RSpec)
+### Rails model and domain tests (Minitest: `test/models`, `test/services`, `test/queries`)
 Cover validations, associations, database constraints, salary precision and currency, effective-date boundaries, salary history preservation, and analytics aggregation rules.
 
-### Rails request/API tests (RSpec)
+### Rails request/API tests (Minitest integration tests: `test/integration`)
 Cover:
 - Successful responses and expected schemas.
 - Authentication and authorization for protected endpoints.

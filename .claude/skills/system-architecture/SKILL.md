@@ -19,7 +19,7 @@ Design a pragmatic, explainable architecture for the Salary Management System. F
 - Authentication and server-side authorization are expected; one HR Manager role is sufficient initially.
 
 ## Workflow
-1. Read `CLAUDE.md`, `PROJECT_DEV_PLAN.md`, and relevant `docs/` files.
+1. Read `CLAUDE.md`, `BACKEND_PLAN.md`, and relevant `docs/` files.
 2. Separate confirmed requirements from assumptions and proposals.
 3. Identify users, use cases, system boundaries, and quality attributes.
 4. Define frontend, backend, persistence, and external-system boundaries.

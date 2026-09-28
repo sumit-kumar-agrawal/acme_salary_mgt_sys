@@ -2,7 +2,8 @@
 
 **Status:** Approved design for migrations (BACKEND_PLAN.md task 1.3)  
 **Version:** 2.0 (2026-09-28)  
-**Engine:** MySQL 8.0.16+ (8.4 locally), InnoDB, `utf8mb4` / `utf8mb4_0900_ai_ci`
+**Engine:** MySQL 8.0.16+ (8.4 locally), InnoDB, `utf8mb4` / `utf8mb4_unicode_ci` (as generated in `backend/config/database.yml`)  
+**Databases:** `salary_management` (development; the name comes from `DB_NAME`) and `salary_management_test`. In development, the Rails 8 Solid Cache and Solid Queue tables share the primary database. They are managed by their own schema files and are not part of this domain design.
 
 Decision IDs (Dn) refer to `BACKEND_PLAN.md` Phase 1 findings and are summarised in `docs/requirements.md` §10.
 
@@ -259,11 +260,11 @@ Employees joined to their in-effect salary as of `:as_of` (INNER JOIN, so employ
 
 ### 7.6 Employee search
 
-`q` is matched with `LIKE` against `employee_number`, `first_name`, and `last_name`. The input is escaped with `sanitize_sql_like`, and the `_ai_ci` collation makes the match case- and accent-insensitive. The match is a contains match (`%q%`), which scans the table; that is acceptable at about 10k rows (D27) and will be re-checked in Phase 6.2.
+`q` is matched with `LIKE` against `employee_number`, `first_name`, and `last_name`. The input is escaped with `sanitize_sql_like`, and the `utf8mb4_unicode_ci` collation makes the match case-insensitive and, for most Latin characters, accent-insensitive. The match is a contains match (`%q%`), which scans the table; that is acceptable at about 10k rows (D27) and will be re-checked in Phase 6.2.
 
 ### 7.7 Rounding
 
-SQL returns exact `DECIMAL` values. Serializers round each monetary aggregate to the currency's `minor_units` with half-up rounding and return it as a string. Rounding is display-only; stored amounts are never rounded.
+SQL returns exact `DECIMAL` values. The jbuilder views (via a shared `_money` partial or helper) round each monetary aggregate to the currency's `minor_units` with half-up rounding and return it as a string. Rounding is display-only; stored amounts are never rounded.
 
 ## 8. Reference data
 
@@ -306,7 +307,7 @@ Departments: Engineering, Finance, Human Resources, Marketing, Operations, Sales
 | Generated `open_flag` + UNIQUE | Partial unique index (PostgreSQL only) | MySQL has no partial indexes; a generated column gives the same guarantee |
 | Overlap checked in a locked service | Triggers | Triggers hide logic and are hard to test; one service owns the rule |
 | `DECIMAL(18,4)` | `DECIMAL(15,2)` | Supports 3-decimal currencies; 14 integer digits is ample for monthly pay |
-| Median via window functions | Median computed in Ruby | Stays in SQL and scales with filters; covered by known-data specs |
+| Median via window functions | Median computed in Ruby | Stays in SQL and scales with filters; covered by known-data tests |
 | No country or department history | Effective-dated org tables | Not required (docs/requirements.md §7) |
 
 ## 11. Rules added during design (approved 2026-09-28)

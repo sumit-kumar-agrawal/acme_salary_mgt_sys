@@ -59,7 +59,7 @@ The application provides authentication and server-side authorization appropriat
 - Backend: Ruby on Rails REST API
 - Frontend: React with Bootstrap
 - Database: MySql
-- Tests: RSpec, React Testing Library, and end-to-end tests
+- Tests: Minitest (Rails backend), React Testing Library, and end-to-end tests
 - Redis/Sidekiq: Optional; introduce only when a concrete caching or background-processing need is established.
 
 ## 6. Explicit exclusions and rationale
@@ -119,19 +119,19 @@ Full rationale for each decision is in `BACKEND_PLAN.md` (Phase 1 findings).
 
 The planned phase refers to `BACKEND_PLAN.md`. The endpoint paths below are relative to `/api/v1`.
 
-| Requirement | Backend capability | Planned endpoints | Planned specs | Phase |
+| Requirement | Backend capability | Planned endpoints | Planned tests | Phase |
 |---|---|---|---|---|
-| FR-01 Employee management | Create, view, and update employees; read-only reference data | `GET/POST /employees`, `GET/PATCH /employees/:id`, `GET /countries`, `GET /departments`, `GET /currencies` | Employee model validations (required fields, unique `employee_number`, status values); request specs for create/update, `422` validation, `404` without data leakage, no salary or email in list payload, `hired_on` update rejected if after the first salary start (I13) | 3.1, 4.3 |
-| FR-02 Salary records | Record a salary change; correct the current or a future-dated record (O1); optional initial salary when creating an employee | `POST /employees/:id/salary_records`, `GET /employees/:id/salary_records/:rid`, `PATCH /employees/:id/salary_records/:rid` | SalaryRecord model specs (positive amount, valid currency, scale vs minor units, date order, not before `hired_on`); request specs for create, correction of current and scheduled records, and invalid input | 3.2, 4.4 |
-| FR-03 Salary history | Preserve history; close previous period; distinguish current from historical records | `GET /employees/:id/salary_records` | Salary-change service specs: closes prior period, transaction rollback on failure, overlap/backdate rejected, future-dated record not treated as current, one-open-record guard; PATCH on a historical record returns `422` | 3.2, 4.4 |
-| FR-04 Search, filters, pagination | Search, filter, sort, and paginate employees and salary reports | `GET /employees?q=&country_id=&department_id=&employment_status=&sort=&page=&per_page=`, `GET /reports/salaries` | Request specs for filter combinations, `per_page` cap, rejected sort fields, pagination metadata; query-count check (no N+1) | 4.3, 5.2 |
-| FR-05 Compensation analytics | Per-currency monthly total, average, median, distribution; country and department breakdown | `GET /analytics/summary`, `GET /analytics/distribution`, `GET /analytics/breakdown` | Query-object specs with known data: per-currency totals, median for odd and even counts, no cross-currency total, as-of date handling, terminated employees excluded; request specs for filters and `401` | 5.1, 5.2 |
+| FR-01 Employee management | Create, view, and update employees; read-only reference data | `GET/POST /employees`, `GET/PATCH /employees/:id`, `GET /countries`, `GET /departments`, `GET /currencies` | Employee model validations (required fields, unique `employee_number`, status values); request tests for create/update, `422` validation, `404` without data leakage, no salary or email in list payload, `hired_on` update rejected if after the first salary start (I13) | 3.1, 4.3 |
+| FR-02 Salary records | Record a salary change; correct the current or a future-dated record (O1); optional initial salary when creating an employee | `POST /employees/:id/salary_records`, `GET /employees/:id/salary_records/:rid`, `PATCH /employees/:id/salary_records/:rid` | SalaryRecord model tests (positive amount, valid currency, scale vs minor units, date order, not before `hired_on`); request tests for create, correction of current and scheduled records, and invalid input | 3.2, 4.4 |
+| FR-03 Salary history | Preserve history; close previous period; distinguish current from historical records | `GET /employees/:id/salary_records` | Salary-change service tests: closes prior period, transaction rollback on failure, overlap/backdate rejected, future-dated record not treated as current, one-open-record guard; PATCH on a historical record returns `422` | 3.2, 4.4 |
+| FR-04 Search, filters, pagination | Search, filter, sort, and paginate employees and salary reports | `GET /employees?q=&country_id=&department_id=&employment_status=&sort=&page=&per_page=`, `GET /reports/salaries` | Request tests for filter combinations, `per_page` cap, rejected sort fields, pagination metadata; query-count check (no N+1) | 4.3, 5.2 |
+| FR-05 Compensation analytics | Per-currency monthly total, average, median, distribution; country and department breakdown | `GET /analytics/summary`, `GET /analytics/distribution`, `GET /analytics/breakdown` | Query-object tests with known data: per-currency totals, median for odd and even counts, no cross-currency total, as-of date handling, terminated employees excluded; request tests for filters and `401` | 5.1, 5.2 |
 | FR-06 Reports and export | Filtered salary report as JSON and CSV | `GET /reports/salaries`, `GET /reports/salaries.csv` | CSV rows match JSON report for the same filters; over 10,000 rows returns `422 export_too_large`; formula-injection escaping; column allowlist; `401` when unauthenticated | 5.3 |
 | FR-07 Authentication and access | Single HR login; default-deny protection on all endpoints | `POST /session`, `DELETE /session`, `GET /session` | Login success/failure (generic message), logout, rate limiting, CSRF, `401` on every protected route | 4.1 |
 | NFR Performance | Pagination, indexes, efficient aggregates at about 10k employees | — | Seeded 10k run; query plans and N+1 review (no latency SLA claimed) | 3.3, 6.2 |
-| NFR Security and privacy | Strong parameters, filtered logs, safe error messages | — | Parameter-filter spec for salary fields; error envelope contains no record data; unpermitted parameters ignored | 4.1, 4.2, 6.3 |
-| NFR Reliability | Transactions for salary changes; preserved history | — | Rollback and concurrency-guard specs | 3.2, 4.4 |
-| NFR Maintainability | Modular code, automated tests, documented API | — | RSpec suite; setup and API docs | 6.1, 7.2 |
+| NFR Security and privacy | Strong parameters, filtered logs, safe error messages | — | Parameter-filter test for salary fields; error envelope contains no record data; unpermitted parameters ignored | 4.1, 4.2, 6.3 |
+| NFR Reliability | Transactions for salary changes; preserved history | — | Rollback and concurrency-guard tests | 3.2, 4.4 |
+| NFR Maintainability | Modular code, automated tests, documented API | — | Minitest suite; setup and API docs | 6.1, 7.2 |
 | NFR Usability | Responsive, accessible UI | — | Out of backend scope; deferred to the frontend plan | — |
 
 Excluded from backend scope: frontend implementation and the features listed in §6.

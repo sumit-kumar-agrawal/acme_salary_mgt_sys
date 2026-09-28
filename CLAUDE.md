@@ -9,7 +9,7 @@ Build a web application to manage salary information for approximately 10,000 em
 - Backend: Ruby on Rails REST API
 - Frontend: React with Bootstrap
 - Database: MySql
-- Backend tests: RSpec
+- Backend tests: Minitest (Rails default; `bin/rails test`)
 - Frontend tests: React Testing Library
 - E2E tests: Playwright
 - Redis and Sidekiq: Only if justified by requirements

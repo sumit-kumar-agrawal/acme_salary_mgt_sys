@@ -2,7 +2,7 @@
 
 **Purpose:** Phased implementation plan for the Rails backend and REST API only. Frontend work will be planned separately later.
 
-**Stack:** Ruby on Rails API, MySql, RSpec. Target data volume: approximately 10,000 employees across multiple countries.
+**Stack:** Ruby on Rails 8 (Ruby 3.2.0), MySql, Minitest. Target data volume: approximately 10,000 employees across multiple countries.
 
 **Scope:** Employee and salary-data management, salary history, authentication/authorization, and structured compensation analytics APIs. Excludes payroll processing, tax/statutory calculations, salary disbursement, external HRMS/banking integrations, conversational AI/RAG, and frontend implementation.
 
@@ -66,8 +66,8 @@ Each decision has a proposed default so review can be quick. **Blocks** names th
 | D22 | Distribution bands | Per-currency bands with fixed-width buckets, computed from each currency's min/max (proposed 10 buckets), with the band edges returned in the response. | 1.4 |
 | D23 | Pagination and sorting | `per_page` defaults to 25, maximum 100. Sort allowlist: `employee_number`, `last_name`, `hired_on`, `created_at`. | 1.4 |
 | D24 | Export limits | Synchronous CSV with every filter applied and a hard cap of 10,000 rows. Exceeding it returns `422 export_too_large`; nothing is truncated. Values starting with `= + - @` or a tab/CR are escaped. No Sidekiq. | 1.4 |
-| D25 | Ruby/Rails versions | Local Ruby 3.1.2 is end-of-life and limits us to Rails 7.2. Proposed: stay on Rails 7.2 / Ruby 3.1 for the assessment, or upgrade to Ruby 3.3 with Rails 8. Record the choice either way. | 1.2 |
-| D26 | Serialization and pagination libraries | Plain serializer POROs and a hand-rolled pagination concern, so no extra gems. | 1.2 |
+| D25 | Ruby/Rails versions | **Superseded 2026-09-28:** the owner generated Rails 8.0.5 on Ruby 3.2.0 (RVM). See ADR 005 and Phase 2 G6. | 1.2 |
+| D26 | Serialization and pagination libraries | **Superseded 2026-09-28:** `jbuilder` views (per `.claude/rules/backend.md`) and `pagy` for pagination; see ADR 005. | 1.2 |
 | D27 | Character set and search | `utf8mb4` with case-insensitive collation. `q` does a prefix/contains `LIKE` on number and name. A full scan is acceptable at 10k rows; revisit only if measurement shows a problem. | 1.3 |
 
 **D5–D27 approved as proposed on 2026-09-28.** They are recorded in `docs/requirements.md` §10 and will be detailed in tasks 1.2–1.4.
@@ -94,7 +94,7 @@ Each decision has a proposed default so review can be quick. **Blocks** names th
 | The docx/md database conflict is resolved late, forcing migration rework | Medium / High | Resolve D1 first in 1.1 |
 | Future-dated records make "current salary" wrong if defined as `effective_to IS NULL` | High / High | Adopt the date-based definition in D7 and test at boundary dates |
 | Race condition: two concurrent salary changes create overlapping periods | Low (single user) / High | Transaction plus `SELECT … FOR UPDATE` on the employee row; unique "one open record" guard via a generated column (MySQL has no partial index) |
-| Median/distribution queries are slow or incorrect on MySQL | Medium / Medium | Query objects with fixture-verified specs; measure with 10k seed rows in Phase 6 |
+| Median/distribution queries are slow or incorrect on MySQL | Medium / Medium | Query objects with fixture-verified tests; measure with 10k seed rows in Phase 6 |
 | Currency precision mismatch (0-, 2-, or 3-decimal currencies) | Medium / Medium | D10 validation against `minor_units` |
 | Salary values leak into logs, errors, or exports | Medium / High | Filter parameters, sanitised error envelopes, explicit export column list |
 | Endpoints built before auth (C7) | High / Medium | Mitigated: auth is now 4.1 |
@@ -198,128 +198,127 @@ Each decision has a proposed default so review can be quick. **Blocks** names th
 ## Phase 2 — Repository and Rails foundation
 **Goal:** Create a reproducible, bootable Rails API project.
 
-### Phase 2 review findings (2026-09-28)
+### Phase 2 review findings (2026-09-28, updated after the owner's scaffold)
 
-Inputs: Phase 1 documents (requirements v1.1, architecture v2.0, database design v2.0, API spec v2.0, ADRs 001–005), `CLAUDE.md`, `.claude/rules/*`, the current repository state, and the local toolchain. No application code exists yet.
+Inputs: Phase 1 documents, `CLAUDE.md`, `.claude/rules/*`, the repository, the local toolchain, and the `backend/` app the owner generated and committed. No domain code exists yet.
 
-#### Current state (observed)
+#### Current state (observed after the scaffold)
 
 | Item | Observation |
 |---|---|
-| Ruby | 3.1.2 via **RVM** (`~/.rvm/rubies/ruby-3.1.2`). A `~/.rbenv` directory also exists. No `.ruby-version` in the repo. |
-| Rails / gems | Rails 7.2.3.1, 7.2.3, 7.2.2.x installed; `mysql2` 0.5.7 already builds; Bundler 2.6.2. RubyGems warns about unresolved `tsort`/`stringio` specs, which is harmless. |
-| MySQL | Homebrew `mysql@8.4` service running on `127.0.0.1:3306`. The root login requires a password Claude does not have. `mysql-client` 9.7 is also installed. |
-| Docker | Docker 27 CLI installed; **daemon not running**. |
-| Repository | No `.gitignore`. `backend/.env.example` is empty. `docker-compose.yml` contains only `services:` and is not valid for use. `README.md` has one paragraph. `.idea/` files are **staged**. `.DS_Store` files are untracked. |
-| Git | On `main`. All Phase 1 work (plan, docs, ADRs 004–005) is **uncommitted**. The last commit is `b7e865f`. `.claude/commands/*` have staged and further unstaged edits. |
+| Ruby | **3.2.0 via RVM** (`backend/.ruby-version`). RVM also has 3.1.2 and 2.7.3. |
+| Rails | **8.0.5.1** (`~> 8.0.5`), `config.load_defaults 8.0`. Generated with the **full-stack default**, not `--api`. |
+| Gems | Adopted: mysql2, puma, jbuilder, pagy 43, dotenv-rails, solid_cache, solid_queue, brakeman, rubocop-rails-omakase. Pending decisions: propshaft, importmap, turbo, stimulus, solid_cable, kamal, thruster, capybara, selenium-webdriver (see G1–G3). `bcrypt` is commented out. |
+| Database | Local Homebrew MySQL 8.4 on 3306. `database.yml` uses `ENV.fetch` for `DB_USERNAME`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, and `DB_NAME`, with `utf8mb4_unicode_ci`. Databases are `salary_management` and `salary_management_test`. In development, the queue, cache, and cable roles share the primary database. **The fallback credentials are `root`/`root`** (G5). |
+| Env | `backend/.env` exists (ignored). `backend/.env.example` exists but is empty, and is also ignored by the generated `/.env*` rule. |
+| Routes | Only the generated `GET /up`. No `/api/v1/health` yet. |
+| Config | `time_zone` not set; `filter_parameters` still the Rails 8 defaults (these already include `email`). |
+| Tests | Minitest `test/` tree with system tests. No RSpec. |
+| Deploy/CI | `Dockerfile`, `.kamal/`, `config/deploy.yml`, and `backend/.github/` generated. GitHub ignores `.github/` inside a subfolder. |
+| Git | Owner-managed. `backend/` is tracked (106 files) with no nested `.git`. `master.key`, `.env`, and `log`/`tmp` contents are **not** tracked. There is no root `.gitignore`. `.idea/` is still staged. |
 
-#### A. Missing decisions
+#### A. Decisions: status after the scaffold
 
-| ID | Decision | Proposed default | Needed by |
+| ID | Decision | Status |
+|---|---|---|
+| E1 | MySQL provision | **Decided (owner):** local Homebrew MySQL 8.4. Docker support deferred to a later phase. |
+| E2 | Database account | **Owner-managed:** the owner created the databases. Least-privilege user still recommended; see G5. |
+| E3 | Env loading | **Decided (owner):** `backend/.env` loaded by `dotenv-rails`. |
+| E4 | Production secrets | **Holds:** env vars only; `master.key` is ignored and untracked. |
+| E5 | `rails new` options | **Superseded:** the owner generated a full-stack Rails 8 app. Consequences are in G1–G3. |
+| E6 | Remove `/up` | **Open.** Now tracked as G7. |
+| E7 | Health controller base class | **Holds:** `ActionController::API` (or `ActionController::Base` with JSON only, if G1 keeps full-stack). |
+| E8 | Foundation config | **Open:** `time_zone = "UTC"` and the extra `filter_parameters` (`password`, `amount`, `salary`, `first_name`, `last_name`, `csrf_token`) are not done. Collation adopted as generated (`utf8mb4_unicode_ci`). |
+| E9 | Gem timing | **Revised:** jbuilder, pagy, and dotenv-rails are already added (ADR 005). `factory_bot_rails`, `faker`, and `bcrypt` are still added when first needed. |
+| E10 | Ruby pinning | **Decided (owner):** RVM default; Ruby 3.2.0 in `backend/.ruby-version`. Version concern in G6. |
+| E11 | Single README | **Open:** the generated `backend/README.md` is a stub; the root README is still one paragraph. |
+| E12 | CLAUDE.md pointer and commands | **Open.** |
+| E13 | CI | **Deferred.** The generated `backend/.github/` is inert. |
+| E14 | Unstage `.idea/` and add a root `.gitignore` | **Open (owner).** |
+| E15 | Commits | **Decided (owner):** the owner commits; Claude never commits. |
+
+#### B. New decisions raised by the scaffold
+
+**Owner decision (2026-09-28):** apply G3; G2 was applied and then **reverted** (Minitest kept); keep everything else as generated (G1 full-stack stays, G4 dotenv group, G5 `database.yml` fallbacks, G6 Ruby 3.2.0, G7 `/up`, G8 `.env.example` unchanged). The recommendations below are kept for reference.
+
+| ID | Decision | Recommendation | Status |
 |---|---|---|---|
-| E1 | How MySQL is provided for development and test | **Local Homebrew MySQL 8.4**, which is already running. `docker-compose.yml` becomes an *optional* MySQL-only service on host port **3307** for reviewers without MySQL, so it can't clash with the local 3306. | 2.1 |
-| E2 | Database account | A dedicated `salary_app` user with rights only on `acme_salary_development` and `acme_salary_test`; never root. The project owner creates it once with a documented SQL snippet (Claude cannot use the root password). | 2.2 |
-| E3 | Environment-variable loading | **No dotenv gem.** `database.yml` reads `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD` via `ENV.fetch`, with local-dev defaults (`127.0.0.1`, `3306`, `salary_app`, and a password with no default). The developer exports variables from their shell or uses `direnv`, as documented. This avoids amending ADR 005. | 2.2 |
-| E4 | Production secrets | Environment variables only (`SECRET_KEY_BASE`, `DB_*`). The generated `credentials.yml.enc` is left unused, and `config/master.key` is git-ignored. | 2.1 / 2.2 |
-| E5 | `rails new` options | `rails _7.2.3.1_ new backend --api --database=mysql --skip-git --skip-test --skip-action-mailer --skip-action-mailbox --skip-action-text --skip-active-storage --skip-action-cable --skip-jbuilder --skip-docker --skip-ci`. Keep Active Job (Rails default, no infrastructure), RuboCop omakase, and Brakeman (ADR 005). | 2.2 |
-| E6 | Generated `/up` health route | **Remove it** and keep the single documented `GET /api/v1/health`, which also checks the database. Fewer public endpoints is better. | 2.2 |
-| E7 | Health controller base class | Inherit from `ActionController::API` directly. `Api::V1::BaseController` with default-deny auth only arrives in 4.1, where health must remain public (API §11). | 2.2 |
-| E8 | Foundation configuration in 2.2 | `config.time_zone = "UTC"`; `filter_parameters` extended per architecture §7; `utf8mb4` / `utf8mb4_0900_ai_ci` in `database.yml`; Rails' default strict SQL mode kept. Session, cookie, and CSRF middleware are **not** added until 4.1. | 2.2 |
-| E9 | When each gem is added | `rspec-rails` in 2.3; `factory_bot_rails` and `faker` in 3.1, when factories first exist; `bcrypt` in 4.1. Each gem is added in the subphase that first needs it. | 2.3 |
-| E10 | Ruby version pinning | Add `.ruby-version` (`3.1.2`) at the repo root and in `backend/`. The `Gemfile` declares `ruby "3.1.2"` and `gem "rails", "~> 7.2.3"`. RVM is documented as the reference manager; rbenv also honours `.ruby-version`. | 2.1 |
-| E11 | README layout | A single root `README.md` covering overview, prerequisites, database setup, running, testing, and links to `docs/` and this plan. No separate `backend/README.md` (Rails' generated stub is removed), to avoid two diverging guides. | 2.1 |
-| E12 | CLAUDE.md changes (the 2.1 prompt says "add or update") | Minimal: add a "Current plan" pointer to `BACKEND_PLAN.md` and a "Commands" section (test and lint commands) once they exist. Scope, rules, and stack text stay unchanged. | 2.1 / 2.3 |
-| E13 | Continuous integration | **Deferred.** Rails' generated workflow would land in `backend/.github/`, where GitHub ignores it. A root-level workflow can be added later as a separate, justified task. Not required by the requirements. | 2.2 |
-| E14 | Housekeeping of unrelated staged files | Unstage `.idea/` (`git rm -r --cached .idea`, files kept on disk) and ignore it together with `.DS_Store`. Leave `.claude/commands/*` edits to the owner. **Requires owner approval** (index change). | 2.1 |
-| E15 | Committing Phase 1 before scaffolding | Commit the Phase 1 documents first, on a feature branch (e.g. `phase-2-foundation`, with Phase 1 docs as its first commit), so `rails new` output is reviewable separately. **Requires owner approval**; Claude does not commit unless asked. | Before 2.1 |
+| G1 | **API-only vs full-stack Rails.** CLAUDE.md specifies a React frontend, and the architecture and API spec describe a JSON API. The generated app includes Propshaft, importmap, Turbo, Stimulus, HTML layouts, and assets. | Convert to API-only: `config.api_only = true`; remove the frontend gems, `app/assets`, `app/javascript`, the HTML layouts, and `config/importmap.rb`. This keeps one frontend (React), as in scope. | Kept as generated (owner) |
+| G2 | **Test framework.** Minitest was generated; CLAUDE.md, `.claude/rules/testing.md`, and the testing and rails-backend skills require RSpec. | Use RSpec: add `rspec-rails`, remove `test/`, `capybara`, and `selenium-webdriver`. End-to-end browser tests belong to the future React plan (Playwright). | **Reverted 2026-09-28:** Minitest `test/` kept (owner) |
+| G3 | **Unused generated infrastructure:** `solid_cable`, `kamal`, `thruster`, `Dockerfile`, `.kamal/`, `config/deploy.yml`, `backend/.github/`. | Remove `solid_cable` (no WebSocket need). Keep the Docker and Kamal files untouched until the owner's Docker phase, then revisit. `.github/` can stay, since it is inert. | **Applied 2026-09-28** (solid_cable removed; Docker/Kamal/.github kept) |
+| G4 | `dotenv-rails` is in the default group, so it loads in production too. | Move it to `group :development, :test`. Production uses real env vars. | Kept as generated (owner) |
+| G5 | `database.yml` falls back to `root`/`root`. That is a hard-coded credential and the MySQL superuser (security rules). | Remove the username and password fallbacks so a missing `.env` fails loudly. Use a least-privilege app user in `.env`. | Kept as generated (owner) |
+| G6 | Ruby 3.2.0: the 3.2 series was scheduled to reach end of life on 2026-03-31, and 3.2.0 is its first patch release. | Accept for the assessment (synthetic data only), or move to a supported Ruby (3.3/3.4) before Phase 3. Owner's choice; recorded in ADR 005. | Kept: Ruby 3.2.0 (owner) |
+| G7 | Generated `/up` health route (was E6). | Remove it; keep the single documented `/api/v1/health` with a database check. | Kept as generated (owner) |
+| G8 | `backend/.env.example` is empty and ignored by the generated `/.env*` rule. | Add `!/.env.example` to `backend/.gitignore` and list the variable names with placeholder values (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `SECRET_KEY_BASE`, `HR_USER_EMAIL`, `HR_USER_PASSWORD`). | Kept as generated (owner) |
+| G9 | The test environment has no cache database, so `rate_limit` tests need a store. | Set `config.cache_store = :memory_store` in `test.rb` when 4.1 adds rate limiting. | 4.1 |
 
-#### B. Assumptions
-- The project owner can run one SQL snippet as MySQL root (E2). Claude never handles the root password.
-- Development and test run on the same local MySQL 8.4 instance, in separate databases.
-- The reviewer's machine has Ruby 3.1.2 (any manager) and either MySQL 8.0.16+ or Docker. The README states both paths.
-- Backend-only: no Node, frontend tooling, or CORS configuration in Phase 2 (ADR 004, E8).
-- There are no deployment targets. Production configuration is limited to env-var secrets and `force_ssl` defaults; no deployment artefacts.
+#### C. Assumptions
+- The owner runs all git operations, database setup, and scaffolding; Claude edits files only on request.
+- Development and test run on the local MySQL 8.4 instance, in separate databases.
+- Docker, Kamal, and deployment are out of Phase 2 (owner decision); generated files are left in place, unused.
+- The backend serves JSON only; any Rails-rendered HTML is out of scope unless G1 decides otherwise.
 
-#### C. Dependencies
+#### D. Dependencies
 
 | Dependency | Blocks | Owner |
 |---|---|---|
-| Approval of E1–E15 | All of Phase 2 | Project owner |
-| Phase 1 docs committed (E15) | 2.1 (clean diff for scaffold review) | Project owner |
-| `salary_app` user and grants created (E2) | 2.2 `db:prepare`, 2.3 spec run | Project owner (root password) |
-| Root `.gitignore` in place **before** `rails new` | 2.2. With `--skip-git`, Rails creates **no** `.gitignore`, so `backend/config/master.key`, `log/`, and `tmp/` would otherwise be untracked and easy to commit | 2.1 |
-| Docker daemon running | Only the optional compose path (E1) | Reviewer |
+| Decisions G1–G8 | 2.2 remaining tasks, 2.3 | Project owner |
+| G6 (Ruby version) | Must be settled before Phase 3, because changing Ruby later forces a re-bundle | Project owner |
+| Root `.gitignore` for `.DS_Store` and `.idea/` (E14) | Clean `git status` | Project owner |
 
-#### D. Risks
+#### E. Risks
 
 | Risk | Likelihood / impact | Mitigation |
 |---|---|---|
-| `rails new` inside the repo runs `git init`, creating a nested repository | High / Medium | `--skip-git` (E5) |
-| `master.key` or logs committed because `--skip-git` also skips `.gitignore` | Medium / High | Root `.gitignore` with backend paths, created in 2.1 before scaffolding; verify with `git status` after 2.2 |
-| Two Ruby managers (RVM and rbenv) resolve different Rubies in different shells | Medium / Medium | `.ruby-version` plus the README note; run `ruby -v` inside `backend/` in 2.2 validation |
-| `mysql2` native build fails on another arm64 Mac (OpenSSL/zstd paths) | Medium / Low | Document `bundle config build.mysql2 --with-opt-dir=$(brew --prefix openssl@3)` as a fallback. It already builds here. |
-| Port 3306 clash if a reviewer runs Docker MySQL alongside a local MySQL | Medium / Low | Compose maps to 3307 (E1) |
-| Test runs wipe development data if the database names collide | Low / High | Distinct names (`_development`, `_test`); `rails_helper` aborts unless `Rails.env.test?` (RSpec default) |
-| Generated Rails stubs drift from the documented design (e.g. `/up`, README) | Medium / Low | E6, E11; review the generated file list in 2.2 |
-| Ruby 3.1 end-of-life | Certain / Low for an assessment | Accepted in ADR 005 |
-| Uncommitted Phase 1 docs lost or tangled with scaffold output | Medium / High | E15 |
+| Two frontends (Rails views and React) drift, or scope creeps into server-rendered UI | Medium / Medium | G1 |
+| Minitest and RSpec both in use, so tests are split across frameworks | Medium / Medium | Resolved: Minitest only (G2 reverted); CLAUDE.md, rules, and skills updated |
+| `root`/`root` fallback used by accident, or copied into production config | Medium / High | G5 |
+| dotenv loaded in production masks missing env vars | Low / Medium | G4 |
+| `.env.example` never committed, so reviewers can't configure the app | High / Low | G8 |
+| Unsupported Ruby 3.2.0 lacks security fixes | Certain / Low for an assessment | G6, ADR 005 |
+| Unused Kamal, Thruster, and Solid Cable code confuses reviewers | Medium / Low | G3 |
 
 ### 2.1 Repository and backend structure
-**Prompt:** `Set up the repository skeleton for the backend-first project per the Phase 2 findings (E1, E4, E10–E12, E14). Add .gitignore, .env.example, .ruby-version, the optional MySQL-only docker-compose.yml, and README setup documentation. Keep frontend implementation out of this phase and never commit secrets. Do not run rails new.`
+**Prompt:** `Complete the repository skeleton around the owner-generated backend/: root .gitignore, backend/.env.example (G8), and README setup documentation. Never commit secrets. Do not run git commands (owner-managed).`
 **Tasks:**
-1. Get owner decisions on E1–E15. If approved, the owner commits the Phase 1 docs (E15) and unstages `.idea/` (E14).
-2. Root `.gitignore`: OS/IDE files (`.DS_Store`, `.idea/`), `.env` and `.env.*` except `backend/.env.example`, and the Rails backend paths (`backend/config/master.key`, `backend/log/*`, `backend/tmp/*`, `backend/storage/*`, `backend/.bundle`, `backend/vendor/bundle`), keeping the `.keep` files.
-3. `backend/.env.example`: `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `MYSQL_ROOT_PASSWORD` (compose only), `SECRET_KEY_BASE` (production only), and placeholders for `HR_USER_EMAIL` / `HR_USER_PASSWORD` (used in 4.1). Placeholder values only.
-4. `docker-compose.yml`: an optional `mysql:8.4` service on host port 3307 with a named volume, utf8mb4 settings, a healthcheck, and an init script creating `salary_app` and the two databases. Credentials come from `.env`.
-5. `db/setup-local-mysql.sql` (or a README snippet): `CREATE USER salary_app`, `CREATE DATABASE` ×2 with utf8mb4, and `GRANT` on those databases only.
-6. `.ruby-version` = `3.1.2` (E10).
-7. `README.md`: overview; repository layout (`backend/`, `docs/`, plans); prerequisites (Ruby 3.1.2, MySQL 8.0.16+ *or* Docker); database setup (local or compose); placeholders for run/test commands (filled in 2.2/2.3); links to requirements, architecture, database design, API spec, ADRs, and this plan.
-8. `CLAUDE.md`: add a "Current plan: BACKEND_PLAN.md" pointer only (E12).
+1. ~~Generate `backend/` and remove the nested git repository~~ Done by the owner.
+2. Root `.gitignore`: `.DS_Store`, `.idea/`, `.env`. Backend paths are already covered by `backend/.gitignore`. The owner unstages `.idea/` (E14).
+3. `backend/.gitignore`: add `!/.env.example`. Fill `backend/.env.example` with variable names and placeholder values only (G8).
+4. `README.md` (root): overview; repository layout; prerequisites (RVM, Ruby per `backend/.ruby-version`, MySQL 8.0.16+); database setup via `backend/.env`; run and test commands (filled in 2.2 and 2.3); links to docs and this plan. Replace `backend/README.md` with a pointer to the root README (E11).
+5. `CLAUDE.md`: add a "Current plan: BACKEND_PLAN.md" pointer (E12).
 
-**Deliverables:** `.gitignore`, `backend/.env.example`, `.ruby-version`, `docker-compose.yml` (optional path), local MySQL setup SQL, and updated `README.md` / `CLAUDE.md`.
-**Acceptance:** `git status` shows no IDE/OS noise; `git check-ignore` confirms `.env`, `backend/config/master.key`, and `backend/log/x.log` are ignored and `backend/.env.example` is not; `docker compose config` validates (Docker not needed to be running); no real secrets in any tracked file; README instructions match E1–E3.
-**Status:** Not Started
+**Deliverables:** Root `.gitignore`, a populated and trackable `backend/.env.example`, and updated `README.md` / `CLAUDE.md`.
+**Acceptance:** `git check-ignore` shows `backend/.env` and `backend/config/master.key` are ignored and `backend/.env.example` is **not**; no secrets in tracked files; the README setup steps work on a clean clone.
+**Status:** In Progress (the scaffold part is done by the owner; the remaining tasks await instruction)
 
-### 2.2 Rails API initialization
-**Prompt:** `Generate the Rails 7.2.3.1 API app in backend/ with the E5 options. Configure database.yml from environment variables (E3, utf8mb4), UTC time zone and filter_parameters (E8), remove /up (E6), and add GET /api/v1/health with a database check (API spec §3, E7). Do not add domain models, auth, sessions, or other gems.`
+### 2.2 Rails application configuration and health endpoint
+**Prompt:** `Align the owner-generated Rails 8 app with the approved design per decisions G1, G3–G5, G7 and E8: API-only mode if approved, remove unused gems, harden database.yml, set UTC and filter_parameters, and add GET /api/v1/health with a database check (API spec §3). Do not add domain models, auth, or sessions.`
 **Tasks:**
-1. Confirm prerequisites: `ruby -v` = 3.1.2 inside the repo; the `salary_app` user exists (E2).
-2. Run `rails _7.2.3.1_ new backend …` (E5) and review the generated file list; remove `backend/README.md` (E11) and any leftover `.github/` or `Dockerfile`.
-3. `Gemfile`: `ruby "3.1.2"`, `gem "rails", "~> 7.2.3"`. No new gems.
-4. `config/database.yml`: `ENV.fetch` for host, port, username, and password; `encoding: utf8mb4`; `collation: utf8mb4_0900_ai_ci`; database names `acme_salary_development` and `acme_salary_test`; production reads everything from env vars.
-5. `config/application.rb`: `config.time_zone = "UTC"`. `config/initializers/filter_parameter_logging.rb`: add `password`, `amount`, `salary`, `email`, `first_name`, `last_name`, `csrf_token` (architecture §7).
-6. Routes: delete `/up`; add a `namespace :api { namespace :v1 { get "health" } }` route.
-7. `Api::V1::HealthController < ActionController::API`: run `SELECT 1`; return `200 {"data":{"status":"ok","database":"ok"}}`, or `503 {"data":{"status":"error","database":"unavailable"}}` when a database error is rescued. No version or environment details.
-8. `bin/rails db:prepare` for development and test.
-9. Update README run instructions.
+1. ~~`rails new backend` with MySQL~~ Done by the owner (Rails 8.0.5.1, full-stack default).
+2. ~~Apply G3: remove `solid_cable` and its config.~~ Done 2026-09-28 (gem, `db/cable_schema.rb`, `cable` entries in `database.yml` removed; production `cable.yml` uses `async`). G1 and G4 kept as generated (owner).
+3. ~~G5~~ Kept as generated (owner).
+4. E8: `config.time_zone = "UTC"`; add `password`, `amount`, `salary`, `first_name`, `last_name`, `csrf_token` to `filter_parameters`.
+5. Keep `/up` (owner, G7); add the `api/v1/health` route and `Api::V1::HealthController` (`SELECT 1`, returning `200` or `503` as in API spec §3).
+6. `bin/rails db:prepare` for development and test; update the README run instructions.
 
-**Deliverables:** Bootable Rails API in `backend/` with environment-driven database configuration and the health endpoint.
-**Acceptance:**
-- `bin/rails db:prepare` succeeds for development and test.
-- `bin/rails server` boots, and `curl localhost:3000/api/v1/health` returns `200` with the documented body.
-- With MySQL stopped or a wrong `DB_PASSWORD`, health returns `503`.
-- `/up` returns `404`.
-- `git status` shows no `master.key`, `log/`, or `tmp/` files.
+**Deliverables:** A Rails 8 app configured per the design, with the health endpoint.
+**Acceptance:** `bin/rails db:prepare` succeeds; `curl localhost:3000/api/v1/health` returns `200` with the documented body, and `503` when MySQL is unreachable; no secrets tracked.
+**Status:** In Progress (scaffold done by the owner; configuration awaits G1, G3–G5, G7)
 
-**Status:** Not Started
-
-### 2.3 RSpec and quality baseline
-**Prompt:** `Add rspec-rails (only), configure RSpec, write request specs for the health endpoint (200 and 503 paths), and establish lint and security baselines with the generated RuboCop omakase and Brakeman. Run everything and record exact commands and results in the README and completion log.`
+### 2.3 Minitest and quality baseline
+**Prompt:** `Using the generated Minitest setup (owner decision, G2 reverted), write integration tests for the health endpoint (200 and 503), and run the test suite, RuboCop (omakase), and Brakeman. Record exact commands and results in the README and completion log.`
 **Tasks:**
-1. Add `rspec-rails` to the `:development, :test` group; run `rails generate rspec:install`; `.rspec` with `--require rails_helper`. Keep `use_transactional_fixtures = true`.
-2. `spec/requests/api/v1/health_spec.rb`:
-   - `200` and the exact JSON body when the database is up.
-   - `503` and the exact body when the connection raises (stub `ActiveRecord::Base.connection` to raise `ActiveRecord::ConnectionNotEstablished`).
-   - The response exposes no version or environment keys.
-   - `/up` returns 404 (routing spec).
-3. Run `bundle exec rspec`, `bin/rubocop`, and `bin/brakeman --no-pager`. Fix any offences in generated code rather than disabling cops, unless a cop conflicts with Rails defaults (document any exception).
-4. README "Testing and quality" section with the exact commands. `CLAUDE.md` "Commands" section (E12).
+1. ~~Replace Minitest with RSpec.~~ Reverted: the Minitest `test/` tree, `capybara`, and `selenium-webdriver` stay as generated.
+2. `test/integration/api/v1/health_test.rb`: `200` with the exact body; `503` when the connection raises; no version or environment keys.
+3. Run `bin/rails test`, `bin/rubocop`, and `bin/brakeman --no-pager`. Fix offences rather than disabling cops, and document any exception.
+4. README "Testing and quality" section and a `CLAUDE.md` "Commands" section (E12).
 
-**Deliverables:** RSpec configuration, health request specs, and clean RuboCop and Brakeman baselines with documented commands.
-**Acceptance:** All three commands exit 0; the actual output summary (example count, offences, warnings) is recorded in the completion log; the commands are documented in README and CLAUDE.md.
-**Status:** Not Started
+**Deliverables:** Health integration tests and clean lint and security baselines.
+**Acceptance:** All three commands exit 0; the actual result summary is recorded in the completion log; the commands are documented.
+**Status:** Not Started (awaits the 2.2 health endpoint). Baseline check 2026-09-28: `bin/rails test` → 0 runs, 0 failures.
 
-**Phase gate:** Rails API boots, database connectivity works, health returns 200/503 correctly, `bundle exec rspec`, `bin/rubocop` and `bin/brakeman` pass, and no secrets or generated artefacts are tracked.
+**Phase gate:** The Rails app boots, database connectivity works, health returns 200 and 503 correctly, `bin/rails test`, `bin/rubocop`, and `bin/brakeman` pass, and no secrets are tracked.
 
 ---
 
@@ -327,14 +326,14 @@ Inputs: Phase 1 documents (requirements v1.1, architecture v2.0, database design
 **Goal:** Implement the core backend data model with reliable data integrity.
 
 ### 3.1 Reference data and employee models
-**Prompt:** `Implement the approved country, currency, department, and employee schema from docs/database-design.md. Add migrations, associations, validations, indexes, and model specs. Use synthetic data only; do not add unrelated entities.`
-**Deliverables:** Migrations, models, factories, and model specs. (The `users` table is created in 4.1 with authentication.)
+**Prompt:** `Implement the approved country, currency, department, and employee schema from docs/database-design.md. Add migrations, associations, validations, indexes, and model tests. Use synthetic data only; do not add unrelated entities.`
+**Deliverables:** Migrations, models, factories, and model tests. (The `users` table is created in 4.1 with authentication.)
 **Acceptance:** Migrations run; associations and validations are covered by tests.
 **Status:** Not Started
 
 ### 3.2 Salary records and history
-**Prompt:** `Implement salary records using the approved effective-date and history design. Store monetary amounts with decimal precision and currency separately. Preserve previous salary records when compensation changes. Add appropriate constraints, indexes, factories, and model specs. Do not calculate payroll, tax, or net pay.`
-**Deliverables:** Salary model, migrations/constraints, factories, and specs.
+**Prompt:** `Implement salary records using the approved effective-date and history design. Store monetary amounts with decimal precision and currency separately. Preserve previous salary records when compensation changes. Add appropriate constraints, indexes, factories, and model tests. Do not calculate payroll, tax, or net pay.`
+**Deliverables:** Salary model, migrations/constraints, factories, and tests.
 **Acceptance:** Salary history is retained; invalid amounts, currencies, and date ranges are rejected according to documented rules.
 **Status:** Not Started
 
@@ -344,7 +343,7 @@ Inputs: Phase 1 documents (requirements v1.1, architecture v2.0, database design
 **Acceptance:** Seed data loads predictably and covers multi-country, multi-currency, and salary-history scenarios.
 **Status:** Not Started
 
-**Phase gate:** Schema and domain behavior are verified by model specs and repeatable seeds.
+**Phase gate:** Schema and domain behavior are verified by model tests and repeatable seeds.
 
 ---
 
@@ -352,31 +351,31 @@ Inputs: Phase 1 documents (requirements v1.1, architecture v2.0, database design
 **Goal:** Deliver secure, documented REST APIs for core salary management.
 
 ### 4.1 Authentication and authorization foundation
-**Prompt:** `Implement proportionate secure authentication for the HR Manager per the approved auth decision (D16) and server-side protection applied by default to every API controller. Keep secrets in environment configuration. Add request specs for login/logout, invalid credentials, rate limiting, and unauthenticated access. Do not build advanced RBAC or approval workflows.`
-**Deliverables:** `users` migration and model (docs/database-design.md §3.1), `hr:create_user` rake task, session endpoints (API spec §4), default-deny base controller, and access-control specs.
+**Prompt:** `Implement proportionate secure authentication for the HR Manager per the approved auth decision (D16) and server-side protection applied by default to every API controller. Keep secrets in environment configuration. Add integration tests for login/logout, invalid credentials, rate limiting, and unauthenticated access. Do not build advanced RBAC or approval workflows.`
+**Deliverables:** `users` migration and model (docs/database-design.md §3.1), `hr:create_user` rake task, session endpoints (API spec §4), default-deny base controller, and access-control tests.
 **Acceptance:** Every non-public endpoint rejects unauthenticated requests by default; credentials come only from environment configuration; no salary data is exposed on auth failure.
 **Status:** Not Started
 **Note:** Moved ahead of the domain endpoints (previously 4.4) so that no employee or salary endpoint ever exists unprotected (finding C7).
 
 ### 4.2 API foundation and response conventions
-**Prompt:** `Implement shared API conventions based on docs/api-specification.md: JSON response shape, error handling, parameter validation, and appropriate HTTP status codes. Add request specs. Avoid unnecessary abstraction.`
-**Deliverables:** API response/error conventions and request specs.
+**Prompt:** `Implement shared API conventions based on docs/api-specification.md: JSON response shape, error handling, parameter validation, and appropriate HTTP status codes. Add integration tests. Avoid unnecessary abstraction.`
+**Deliverables:** API response/error conventions and integration tests.
 **Acceptance:** Success and error responses are consistent and tested.
 **Status:** Not Started
 
 ### 4.3 Employee endpoints
-**Prompt:** `Implement employee endpoints (docs/api-specification.md §6), including list/detail, create with optional initial_salary in one transaction, and update, plus the read-only reference-data endpoints (§5). Support search, filters, sorting, and pagination. Prevent unnecessary sensitive-field exposure, avoid N+1 queries, and add request specs.`
-**Deliverables:** Employee and reference-data API endpoints and request specs.
+**Prompt:** `Implement employee endpoints (docs/api-specification.md §6), including list/detail, create with optional initial_salary in one transaction, and update, plus the read-only reference-data endpoints (§5). Support search, filters, sorting, and pagination. Prevent unnecessary sensitive-field exposure, avoid N+1 queries, and add integration tests.`
+**Deliverables:** Employee and reference-data API endpoints and integration tests.
 **Acceptance:** Contract, validation, filtering, pagination, and authorization behavior are tested.
 **Status:** Not Started
 
 ### 4.4 Salary and history endpoints
-**Prompt:** `Implement salary record and salary-history endpoints per the API contract: create (salary change that closes the prior period), list, show, and PATCH correction of current or scheduled (future-dated) records only (D4 + O1). Validate amount, currency, and effective dates; preserve historical records; use transactions where needed. Add request specs for success and failure cases. Do not implement payroll calculations or disbursement.`
-**Deliverables:** Salary/history endpoints and request specs.
+**Prompt:** `Implement salary record and salary-history endpoints per the API contract: create (salary change that closes the prior period), list, show, and PATCH correction of current or scheduled (future-dated) records only (D4 + O1). Validate amount, currency, and effective dates; preserve historical records; use transactions where needed. Add integration tests for success and failure cases. Do not implement payroll calculations or disbursement.`
+**Deliverables:** Salary/history endpoints and integration tests.
 **Acceptance:** Current and historical records behave as documented; a salary change preserves the prior record; PATCH corrects current and scheduled records and returns `422 salary_record_not_editable` for historical ones; invalid changes are rejected.
 **Status:** Not Started
 
-**Phase gate:** Employee and salary APIs satisfy the contract and pass relevant request specs.
+**Phase gate:** Employee and salary APIs satisfy the contract and pass relevant integration tests.
 
 ---
 
@@ -384,19 +383,19 @@ Inputs: Phase 1 documents (requirements v1.1, architecture v2.0, database design
 **Goal:** Provide accurate, currency-aware answers to organizational compensation questions.
 
 ### 5.1 Metric definitions and query layer
-**Prompt:** `Implement the agreed compensation metrics and query layer from the requirements. Define how filters and effective dates apply. Group totals by currency and never combine unlike currencies without an approved conversion policy. Add unit/service specs.`
+**Prompt:** `Implement the agreed compensation metrics and query layer from the requirements. Define how filters and effective dates apply. Group totals by currency and never combine unlike currencies without an approved conversion policy. Add unit/service tests.`
 **Deliverables:** Analytics query/service layer and tests.
 **Acceptance:** Metric definitions are explicit and calculations are tested against representative data.
 **Status:** Not Started
 
 ### 5.2 Analytics and salary report endpoints
-**Prompt:** `Expose approved compensation analytics (docs/api-specification.md §8) through Rails endpoints with documented filters and clear currency context. Return aggregates where possible rather than unnecessary individual salary details. Also implement the paginated JSON salary report GET /reports/salaries (§9.1, D19) on a SalaryReportQuery that 5.3 will reuse. Add request specs and authorization checks.`
-**Deliverables:** Analytics endpoints, JSON salary report endpoint, and request specs.
+**Prompt:** `Expose approved compensation analytics (docs/api-specification.md §8) through Rails endpoints with documented filters and clear currency context. Return aggregates where possible rather than unnecessary individual salary details. Also implement the paginated JSON salary report GET /reports/salaries (§9.1, D19) on a SalaryReportQuery that 5.3 will reuse. Add integration tests and authorization checks.`
+**Deliverables:** Analytics endpoints, JSON salary report endpoint, and integration tests.
 **Acceptance:** Filtered and unfiltered responses are correct, documented, and access-controlled.
 **Status:** Not Started
 
 ### 5.3 CSV/report export endpoint
-**Prompt:** `Implement the backend CSV export endpoint for filtered salary reports (FR-06, D24). Share the filter/query object with the JSON report, apply authorization, enforce the row cap, and protect against CSV formula injection. Add request specs.`
+**Prompt:** `Implement the backend CSV export endpoint for filtered salary reports (FR-06, D24). Share the filter/query object with the JSON report, apply authorization, enforce the row cap, and protect against CSV formula injection. Add integration tests.`
 **Deliverables:** Export endpoint and tests.
 **Acceptance:** Exported rows match the JSON report for the same filters; only allowlisted columns appear; formula cells are escaped; over 10,000 rows returns `422 export_too_large`.
 **Status:** Not Started
@@ -409,8 +408,8 @@ Inputs: Phase 1 documents (requirements v1.1, architecture v2.0, database design
 **Goal:** Validate backend behavior against the target data volume without inventing unspecified SLAs.
 
 ### 6.1 Backend test coverage review
-**Prompt:** `Review model, service, and request specs against docs/requirements.md and docs/api-specification.md. Add missing tests for salary history, currency-safe analytics, validation, pagination, and authorization. Run the relevant RSpec suite and report actual results.`
-**Deliverables:** Coverage review, additional specs, and test results.
+**Prompt:** `Review model, service, and integration tests against docs/requirements.md and docs/api-specification.md. Add missing tests for salary history, currency-safe analytics, validation, pagination, and authorization. Run the relevant Minitest suite (`bin/rails test`) and report actual results.`
+**Deliverables:** Coverage review, additional tests, and test results.
 **Acceptance:** Critical backend acceptance criteria have automated coverage; gaps are documented.
 **Status:** Not Started
 
@@ -475,12 +474,16 @@ Inputs: Phase 1 documents (requirements v1.1, architecture v2.0, database design
 | 2026-09-28 | 1.5 | Cross-checked all Phase 1 documents (checklist under 1.5). Fixed: plan 2.2, 3.1, 4.1, 4.3, 4.4, 5.2, 5.3 and D4/D18/D24 wording; requirements §10 export cap and email; DB design §4, §5 (I13 both ways), §7.1, §7.5; API §6.4; ADR 001 accepted. §F fully applied | Documentation cross-check only; no code or tests | Phase 1 gate passed. Derived rule for review: an employee `PATCH` that moves `hired_on` after the first salary start is rejected (I13 enforced both ways) |
 | 2026-09-28 | 1.1 (re-validation) | Re-checked 1.1 acceptance against the current docs; all criteria still met. Brought requirements §11 in line with O1, I13 (both directions), email exclusion, and `422 export_too_large`; fixed stale wording in C2 and 1.1 task 2 | Documentation cross-check only; no code or tests | None |
 | 2026-09-28 | 2 (review) | Reviewed Phase 1 docs, repository state, and toolchain for Phase 2. Recorded current state, decisions E1–E15, assumptions, dependencies, and risks. Expanded 2.1–2.3 into concrete tasks with verifiable acceptance criteria | Read-only checks: Ruby 3.1.2 (RVM), Rails 7.2.3.1 and mysql2 0.5.7 installed, Homebrew MySQL 8.4 listening on 3306, Docker daemon not running. No code written | Awaiting E1–E15; owner to commit Phase 1 docs (E15) and create the `salary_app` DB user (E2) |
+| 2026-09-28 | 2 (scaffold sync) | Owner generated `backend/` (Rails 8.0.5.1, Ruby 3.2.0, full-stack default, jbuilder, pagy, dotenv-rails, Solid Cache/Queue/Cable, Kamal) and committed it. Updated ADR 005 (versions and gems), ADR 004 (rate-limit store), architecture v2.1 (jbuilder views, pagy, Solid Cache/Queue, versions), database design (collation, database names, Solid tables), D25/D26, and rewrote the Phase 2 findings and tasks. Recorded owner decisions and new decisions G1–G9 | Read-only inspection of `backend/` (Gemfile, lockfile, database.yml, routes, config, tracked files). `.env` values not read. No code changed, no commands run in the app | Owner to decide G1 (API-only), G2 (RSpec), G3–G5, G6 (Ruby version), G7 (`/up`), G8 (`.env.example`) |
+| 2026-09-28 | 2.2 / 2.3 (G2, G3) | Owner chose G2 and G3; everything else kept as generated. G2: removed `capybara`, `selenium-webdriver`, and `backend/test/`; added `rspec-rails` and ran `rails generate rspec:install`. G3: removed `solid_cable`, `db/cable_schema.rb`, and the `cable` roles in `database.yml`; production `cable.yml` now uses `async`. Updated ADR 005 and the database-design header | Under Ruby 3.2.0 (RVM): `bundle install` completed (rspec-rails 8.0.4; solid_cable, capybara, selenium gone from the lockfile); `bundle exec rspec` → 0 examples, 0 failures; `bin/rails runner` boots Rails 8.0.5.1 with cable adapter `async`; `bin/rubocop` reports 2 pre-existing Gemfile offences (not changed) | Deletions left unstaged for the owner to commit. `backend/.github/workflows/ci.yml` still calls `bin/rails test test:system` (inert) |
+| 2026-09-28 | 2.3 (G2 revert) | Owner reverted G2: restored `backend/test/` from git; restored `capybara` and `selenium-webdriver`; removed `rspec-rails`, `.rspec`, and `spec/`. G3 changes kept. ADR 005 and task 2.3 updated for Minitest | Ruby 3.2.0: `bundle install` completed (lockfile has capybara and selenium, no rspec-rails); Gemfile differs from HEAD only by the G3 solid_cable removal; `bin/rails test` → 0 runs, 0 assertions, 0 failures | CLAUDE.md, `.claude/rules/testing.md`, and the testing and rails-backend skills still say RSpec (owner to update); `docs/requirements.md` §11 and API spec §12 use RSpec wording |
+| 2026-09-28 | 2 (docs sync: Minitest) | Aligned Markdown with the codebase's Minitest setup: CLAUDE.md (backend tests), `.claude/rules/testing.md` (paths `backend/test/**/*.rb`), testing skill (Minitest layers; MySQL instead of PostgreSQL; BACKEND_PLAN.md instead of PROJECT_DEV_PLAN.md), rails-backend skill, requirements §5 and §11, API spec §12 heading, architecture, database design, ADR 004, and Phases 3–6 of this plan ("specs" → "tests") | grep for RSpec/spec references afterwards (see summary). Completion-log history and superseded PROJECT_DEV_PLAN.md left unchanged on purpose | — |
 
 ## Current progress
 - **Current phase:** Phase 1 — Backend requirements and design — **Done (gate passed 2026-09-28)**
 - **Next phase:** Phase 2 — Repository and Rails foundation. Review findings recorded; tasks 2.1–2.3 proposed.
-- **Next subphase:** 2.1 — Repository and backend structure (Not Started; awaiting decisions E1–E15)
-- **Overall status:** Phase 1 complete; Phase 2 planned, not started
+- **Current subphases:** 2.1 and 2.2 In Progress (scaffold done by the owner); 2.3 Not Started. Awaiting decisions G1–G8.
+- **Overall status:** Phase 1 complete; Phase 2 in progress
 
 ## Future work
 Frontend phases will be added after the backend/API scope and implementation are complete or stable.
