@@ -70,12 +70,17 @@ The app listens on `http://localhost:3000`. The documented health endpoint `GET 
 
 ```bash
 cd backend
-bin/rails test                # Minitest suite (runs in parallel)
-bin/rubocop                   # style (rubocop-rails-omakase)
-bin/brakeman --no-pager       # static security scan
+bin/rails test                                          # full Minitest suite
+bin/rails test test/integration/api/v1/health_test.rb   # a single file
+bin/rails test test/integration/api/v1/health_test.rb:13  # a single test (by line)
+bin/rubocop                                             # style (rubocop-rails-omakase)
+bin/brakeman --no-pager                                 # static security scan
 ```
 
-The baseline results are recorded in `BACKEND_PLAN.md` once task 2.3 is complete.
+- Tests use the `salary_management_test` database, which must exist first (`bin/rails db:test:prepare`).
+- Minitest runs in parallel only once the suite reaches 50 tests. It then creates one database per worker (`salary_management_test-0`, `-1`, …), so the MySQL user needs `CREATE` rights on `salary_management_test%`.
+- Integration tests live in `test/integration/`, and model, service, and query tests in `test/models`, `test/services`, and `test/queries`.
+- The latest baseline results (test counts, RuboCop offences, Brakeman warnings) are recorded in the `BACKEND_PLAN.md` completion log.
 
 ## Documentation
 

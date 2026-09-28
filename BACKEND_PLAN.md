@@ -314,27 +314,29 @@ Re-checked against `backend/` as it is now and the updated docs. Items G1–G9 a
 **Tasks:**
 1. ~~`rails new backend` with MySQL~~ Done by the owner (Rails 8.0.5.1, full-stack default).
 2. ~~Apply G3: remove `solid_cable` and its config.~~ Done 2026-09-28 (gem, `db/cable_schema.rb`, `cable` entries in `database.yml` removed; production `cable.yml` uses `async`). G1 and G4 kept as generated (owner).
-3. ~~G5~~ Kept as generated (owner). Apply H3 (approved): development and test use only the `primary` role, before the first `db:prepare`.
-4. E8: `config.time_zone = "UTC"`; add `password`, `amount`, `salary`, `first_name`, `last_name`, `csrf_token` to `filter_parameters`.
-5. Keep `/up` (owner, G7); add the `api/v1/health` route and `Api::V1::HealthController < ActionController::API` (E7, H1), using a small `DatabaseHealth.up?` check (`SELECT 1`) and returning `200` or `503` as in API spec §3.
+3. ~~G5~~ Kept as generated (owner). ~~Apply H3 (approved): development and test use only the `primary` role.~~ Done 2026-09-28.
+4. ~~E8: `config.time_zone = "UTC"`; extend `filter_parameters`.~~ Done 2026-09-28 (`amount`, `salary`, `first_name`, `last_name` added; `password`, `csrf_token`, and `email` were already covered by `:passw`, `:token`, and `:email`).
+5. ~~Keep `/up`; add the `api/v1/health` route and `Api::V1::HealthController < ActionController::API` with a `DatabaseHealth.up?` check.~~ Done 2026-09-28 (`app/models/database_health.rb`, `app/controllers/api/v1/health_controller.rb`, `app/views/api/v1/health/show.json.jbuilder`, route with `format: :json` default).
 6. Owner runs `bin/rails db:prepare` for development and test (H6); update the README run instructions.
 7. ~~Docs: align architecture §5 and ADR 004 with the full-stack base controller decision (H1).~~ Done 2026-09-28.
 
 **Deliverables:** A Rails 8 app configured per the design, with the health endpoint.
 **Acceptance:** `bin/rails db:prepare` succeeds; `curl localhost:3000/api/v1/health` returns `200` with the documented body, and `503` when MySQL is unreachable; no secrets tracked.
-**Status:** In Progress (scaffold done by the owner; G3 applied, G1/G4/G5/G7 kept). Remaining: E8 config, health endpoint, H1, H3, H6.
+**Status:** Done (2026-09-28, marked by owner). Open follow-ups: (a) **json constraint (resolved by the owner on 2026-09-28: Gemfile now has `gem "json", "< 3"`; lockfile json 2.21.2):** `Gemfile.lock` pins `json (< 3)` → 2.6.3, but the `gem "json", "< 3"` line is not in the `Gemfile`, so the next re-resolve could return to json 3.x and break all JSON responses (ActiveSupport 8.0 passes `quirks_mode`); restore the Gemfile line and note it in ADR 005. (b) The `503` path was not verified over HTTP (covered by the 2.3 integration test). (c) `db:prepare` (H6) is still the owner's step; the development database already exists. (d) README run section still says the health endpoint "arrives in task 2.2".
 
 ### 2.3 Minitest and quality baseline
 **Prompt:** `Using the generated Minitest setup (owner decision, G2 reverted), write integration tests for the health endpoint (200 and 503), and run the test suite, RuboCop (omakase), and Brakeman. Record exact commands and results in the README and completion log.`
 **Tasks:**
 1. ~~Replace Minitest with RSpec.~~ Reverted: the Minitest `test/` tree, `capybara`, and `selenium-webdriver` stay as generated.
-2. `test/integration/api/v1/health_test.rb`: `200` with the exact body; `503` when `DatabaseHealth.up?` is forced false (H5); no version or environment keys.
+2. ~~`test/integration/api/v1/health_test.rb`: `200` with the exact body; `503` when `DatabaseHealth.up?` is forced false (H5); no version or environment keys.~~ Written 2026-09-28 (3 tests; `DatabaseHealth.up?` swapped via `define_singleton_method` because minitest 6 has no `minitest/mock`).
 3. Run `bin/rails test`, `bin/rubocop`, and `bin/brakeman --no-pager`. Fix offences rather than disabling cops, and document any exception (the 2 pre-existing Gemfile offences need an owner OK). Note parallel test databases in the README (H4).
-4. README "Testing and quality" section and a `CLAUDE.md` "Commands" section (E12).
+4. ~~README "Testing and quality" section and a `CLAUDE.md` "Commands" section (E12).~~ Done 2026-09-28.
 
 **Deliverables:** Health integration tests and clean lint and security baselines.
 **Acceptance:** All three commands exit 0; the actual result summary is recorded in the completion log; the commands are documented.
-**Status:** Not Started (awaits the 2.2 health endpoint). Baseline check 2026-09-28: `bin/rails test` → 0 runs, 0 failures.
+**Status:** Done (2026-09-28). All three commands exit 0: `bin/rails test` 3 runs, 7 assertions, 0 failures; `bin/rubocop` 28 files, no offences; `bin/brakeman` 0 warnings, 2 ignored (owner-accepted support warnings in `config/brakeman.ignore`). History: the 503 test initially failed because the `render … status:` line was commented out (restored with owner approval); 3 RuboCop offences in owner-edited lines were autocorrected with owner approval.
+
+**Phase 2 gate: passed on 2026-09-28.** The app boots; the database is reachable; health returns 200 (HTTP on :3000 and test) and 503 (integration test); tests, RuboCop, and Brakeman pass; no `.env` or `master.key` tracked. Carried-over follow-ups from 2.2: README health line still says "arrives in task 2.2"; `db:prepare` (H6) remains the owner's step (dev and test databases already exist).
 
 **Phase gate:** The Rails app boots, database connectivity works, health returns 200 and 503 correctly, `bin/rails test`, `bin/rubocop`, and `bin/brakeman` pass, and no secrets are tracked.
 
@@ -343,25 +345,102 @@ Re-checked against `backend/` as it is now and the updated docs. Items G1–G9 a
 ## Phase 3 — Domain models and persistence
 **Goal:** Implement the core backend data model with reliable data integrity.
 
+### Phase 3 review findings (2026-09-28)
+
+Inputs: `docs/database-design.md` v2.0 (with later updates), ADRs 002, 003, and 005, `docs/requirements.md` §10–§11, API spec §5–§7, and the Phase 2 outcome. Observed: both databases are `utf8mb4` / `utf8mb4_unicode_ci` on MySQL 8.4.10 and contain only `schema_migrations` and `ar_internal_metadata`; there is no `db/migrate/` or `db/schema.rb`; `test_helper.rb` loads `fixtures :all` and parallelizes at 50 or more tests; `factory_bot_rails` and `faker` are not in the Gemfile.
+
+#### A. Missing decisions
+
+**Owner decisions (2026-09-28):** all of J1–J14 approved. J3–J5 and J14 were applied in 3.1; J7–J13 apply in 3.2; J6 applies in 3.3.
+
+| ID | Decision | Recommendation | Needed by |
+|---|---|---|---|
+| J1 | **Test data approach.** The testing rules say "use factories", ADR 005 lists `factory_bot_rails` and `faker` for 3.1, and Minitest's default is YAML fixtures (`fixtures :all` is already on). | Add `factory_bot_rails` (test) and `faker` (development and test; the seeds need it). Use **fixtures** for the small, fixed reference data (countries, departments, currencies) and **FactoryBot** for employees and salary records. `faker` stays out of production (J6). | 3.1 |
+| J2 | **Who runs migrations.** The owner creates the databases (H6), but every Phase 3 subphase needs `bin/rails db:migrate` for development and a test-schema load to validate. | Allow Claude to run `bin/rails db:migrate` (development) and `bin/rails db:test:prepare`; these create tables only, not databases or users. Otherwise the owner runs them and Claude validates afterwards. | 3.1 |
+| J3 | **Currency key type.** The design says `CHAR(3)`; Rails generates `VARCHAR(3)` for `string, limit: 3`. The FK column and the referenced key must have compatible types and the same collation. | Use `string, limit: 3` (VARCHAR) for `currencies.code`, `salary_records.currency_code`, and `countries.code` (`limit: 2`). Update database design §3. | 3.1 |
+| J4 | **Employment status representation.** | String-backed Rails enum, `enum :employment_status, { active: "active", on_leave: "on_leave", terminated: "terminated" }, validate: true`, plus the DB `CHECK` (I3). | 3.1 |
+| J5 | **Normalisation.** | Rails `normalizes`: `employee_number` stripped and upper-cased; `email` stripped and down-cased, with blank stored as `NULL` (so the unique index allows many "no email" rows); `countries.code` and `currencies.code` upper-cased. | 3.1 |
+| J6 | **Reference data vs demo data.** The app cannot work without countries, departments, and currencies, even in production, but 10,000 synthetic employees must never reach production. | Split the seeds: `db/seeds.rb` does an idempotent `upsert_all` of reference data only (safe everywhere); synthetic employees and salaries come from a separate `bin/rails demo:seed` task (development only, refuses in production, requires `faker`). Update database design §9. | 3.3 |
+| J7 | **Where the salary services are built.** The plan puts the salary *model* in 3.2 and the *endpoints* in 4.4, but the history rules (I10, I11) live in `Salaries::ChangeService` and `Salaries::CorrectionService`. | Build and test both services in **3.2** (domain logic), and `Employees::CreateService` (employee plus optional initial salary) in **3.2** after salary records exist. Controllers in 4.3 and 4.4 only call them. | 3.2 |
+| J8 | **Read-only columns.** With `load_defaults 8.0`, assigning an `attr_readonly` attribute on a persisted record **raises** `ActiveRecord::ReadonlyAttributeError`. | Keep `attr_readonly :employee_id, :effective_from`. `CorrectionService` rejects date changes before assigning (API §7.5 expects `422 validation_failed`), so the error is never user-visible. Cover it with a model test. | 3.2 |
+| J9 | **Where the salary scale rule lives (I5).** `DECIMAL(18,4)` accepts 4 decimal places for every currency. | A model validation: `amount.round(currency.minor_units) == amount`, for example rejecting JPY `1000.5` and accepting KWD `1.234`. | 3.2 |
+| J10 | **I13 in both directions.** The employee-side rule (`hired_on` must not be after the first salary start) needs `SalaryRecord`. | The salary-side check is added in 3.2 on `SalaryRecord`; the employee-side check is also added in 3.2 (not 3.1), once the association exists. | 3.2 |
+| J11 | **Testing the concurrency guard.** A real two-thread race needs non-transactional tests against MySQL, which are slow and flaky. | Test the database guards directly (a second open record raises `ActiveRecord::RecordNotUnique`; a duplicate start date is rejected) and test that `ChangeService` takes `lock!` on the employee. No thread-race test. | 3.2 |
+| J12 | **Time in tests.** | Use `travel_to` for every test involving "current", "scheduled", or "historical" status, including month and year boundaries. | 3.2 |
+| J13 | **Schema format.** Generated columns and `CHECK` constraints must survive `schema.rb`. | Keep `schema.rb` (Rails dumps MySQL virtual columns and check constraints). Validate by running `db:test:prepare`, which loads from `schema.rb`, and asserting that the constraints fire in tests. Switch to `structure.sql` only if the round-trip loses anything. | 3.2 |
+| J14 | **Association deletion behaviour.** | `has_many ..., dependent: :restrict_with_exception` on countries, departments, currencies, and employees, matching `ON DELETE RESTRICT` (I12). | 3.1 |
+
+#### B. Assumptions
+- The schema follows `docs/database-design.md` v2.0 as approved (tables §3, indexes §4, rules I1–I13, O1), with the type adjustment in J3.
+- Reference data is the fixed set in database design §8 (8 countries, 8 departments, 7 currencies). Adding more is a seed change.
+- `users` stays in 4.1; Phase 3 adds no auth.
+- No endpoints, controllers, or jbuilder views in Phase 3.
+- Analytics query objects (median, distribution) belong to Phase 5. Phase 3 only provides the `SalaryRecord.in_effect_on(date)` scope they build on.
+
+#### C. Dependencies
+
+| Dependency | Blocks | Owner |
+|---|---|---|
+| J1 (gems) and J2 (who runs migrations) | 3.1 | Project owner |
+| 3.1 tables (countries, currencies, employees) | 3.2 foreign keys | — |
+| 3.2 services and scope | 3.3 seed history generation, 4.3 and 4.4 endpoints, Phase 5 queries | — |
+| MySQL 8.0.16 or later (CHECK enforcement) | 3.1, 3.2 | Met (8.4.10) |
+| `CREATE` rights for per-worker test databases once there are 50 or more tests (H4) | 3.2 onwards | Met with the current `root` user (G5) |
+
+#### D. Risks
+
+| Risk | Likelihood / impact | Mitigation |
+|---|---|---|
+| Generated column or CHECK constraints lost in the `schema.rb` round-trip, so the test database lacks the guards | Low / High | J13: tests that expect the constraint errors |
+| FK or collation mismatch between `currency_code` and `currencies.code` | Low / Medium | J3: same type and collation on both sides; migration runs in development and test |
+| Overlapping periods written outside the service (console, `insert_all`) | Medium / High | Model overlap validation (I10); seeds build history already closed; unique open-record index |
+| Off-by-one errors in period closing (`effective_to = new start − 1 day`) or status at boundaries | Medium / High | J12: `travel_to` tests on the day before, the day of, and the day after |
+| Demo seeds run in production | Low / High | J6: separate task that refuses in production |
+| 10k-row seed is slow or non-deterministic | Medium / Low | `insert_all` batches of 1,000, fixed `Random`/Faker seed, one transaction |
+| Mixing fixtures and factories causes duplicate reference rows | Medium / Low | J1: reference data only in fixtures; factories look it up instead of creating it |
+| Rules drift between the model and the services | Medium / Medium | Database constraints as the backstop, services as the only writers, tests at both levels |
+
 ### 3.1 Reference data and employee models
-**Prompt:** `Implement the approved country, currency, department, and employee schema from docs/database-design.md. Add migrations, associations, validations, indexes, and model tests. Use synthetic data only; do not add unrelated entities.`
-**Deliverables:** Migrations, models, factories, and model tests. (The `users` table is created in 4.1 with authentication.)
-**Acceptance:** Migrations run; associations and validations are covered by tests.
+**Prompt:** `Implement countries, departments, currencies, and employees from docs/database-design.md §3.2–§3.5 and §4 (with J3–J5, J14). Add migrations with FKs, CHECK constraints, and indexes; models with associations, normalisation, and validations; fixtures for reference data and factories for employees (J1); and model tests. No salary records, users, or endpoints.`
+**Tasks:**
+1. ~~Resolve J1 and J2 with the owner.~~ Approved 2026-09-28. Add `factory_bot_rails` (test) and `faker` (development and test) with an ADR 005 amendment; Claude may run `bin/rails db:migrate` and `bin/rails db:test:prepare`.
+2. ~~Migrations: `countries` (code `limit: 2`, unique code and name), `departments` (unique name), `currencies` (string PK `code`, `limit: 3`; `minor_units` with `CHECK 0–4`), `employees` (columns per §3.5; FKs with `ON DELETE RESTRICT`; `CHECK` on `employment_status`; the indexes in §4).~~ Done.
+3. ~~Models: `Country`, `Department`, `Currency` (`self.primary_key = "code"`), `Employee` (`belongs_to` country and department; enum J4; `normalizes` J5; presence, format, and uniqueness validations I1–I3).~~ Done.
+4. ~~Test data: fixtures for the reference data in design §8; an `employee` factory that uses the reference fixtures.~~ Done.
+5. ~~Model tests: required fields; employee number format and case-insensitive uniqueness; email normalisation and blank-to-NULL; status values; FK and restrict-delete behaviour; that the DB constraints fire when validations are bypassed (`insert_all` or `update_column`).~~ Done.
+
+**Deliverables:** Four migrations, four models, fixtures, an employee factory, and model tests. `db/schema.rb` generated.
+**Acceptance:** `db:migrate` and `db:test:prepare` succeed; `bin/rails test` passes; each of I1–I3 and I12 has a test at the model level and, where the DB enforces it, at the database level; `bin/rubocop` and `bin/brakeman` stay clean.
+**Status:** Done (2026-09-28). Applied the J3, J4, J5, and J14 defaults (approved by the owner on 2026-09-28). Results: `db:migrate` and `db:test:prepare` succeed; the test DB has both CHECK constraints after loading `schema.rb`; `db:migrate:redo STEP=4` leaves `schema.rb` identical; `bin/rails test` 37 runs, 79 assertions, 0 failures; RuboCop 41 files, no offences; Brakeman 0 warnings (2 ignored). Note for 3.3: MySQL `insert_all` silently skips unique-key conflicts, so use `insert_all!`.
+
+### 3.2 Salary records, history services, and employee creation
+**Prompt:** `Implement salary_records per docs/database-design.md §3.6, §4–§7 and ADR 003 (with J7–J13): migration with the generated open_flag column, CHECKs, FKs, and unique indexes; SalaryRecord model with validations I4–I7, I9–I11, I13, the in_effect_on scope, and status helpers; Salaries::ChangeService, Salaries::CorrectionService, and Employees::CreateService with locking and transactions. Do not calculate payroll, tax, or net pay; no endpoints.`
+**Tasks:**
+1. Migration: `salary_records` (amount `DECIMAL(18,4)` with `CHECK > 0`; `currency_code` FK to `currencies.code`; `CHECK effective_to >= effective_from`; virtual stored `open_flag`; unique `(employee_id, effective_from)` and `(employee_id, open_flag)`).
+2. `SalaryRecord` model: validations I4–I7 plus scale versus `minor_units` (J9), overlap (I10), and `effective_from >= hired_on` (I13); `attr_readonly` (J8); `in_effect_on(date)` scope (D7); `status_on(date)` returning `current`, `scheduled`, or `historical`; `editable?` (D4 + O1).
+3. `Employee`: `has_many :salary_records` (restrict); `current_salary`; the I13 employee-side validation (J10).
+4. `Salaries::ChangeService` (design §6: lock the employee, check the latest record, close it, insert the new one), `Salaries::CorrectionService` (lock; editable only; `amount`/`currency_code` only), and `Employees::CreateService` (employee plus optional initial salary in one transaction).
+5. Tests (J11, J12): scale per currency (JPY 0, USD 2, KWD 3); boundary dates; future-dated records are `scheduled`; the database guards fire; change closes the prior period exactly one day earlier; backdating and same-date changes are rejected; rollback leaves no partial state; correction allowed for current and scheduled records and rejected for historical ones; dates are immutable; create with a bad initial salary creates nothing.
+6. Update the database design §3 types (J3) and note that the schema round-trip was verified (J13).
+
+**Deliverables:** Migration, `SalaryRecord` model, three services, a salary factory, model and service tests, and an updated `schema.rb`.
+**Acceptance:** `bin/rails test` passes with every rule I4–I13 and O1 covered; `db:test:prepare` from `schema.rb` keeps the generated column and CHECKs (asserted by tests); RuboCop and Brakeman are clean.
+**Status:** Not Started (all decisions approved; ready on instruction)
+
+### 3.3 Reference seeds, demo data, and integrity review
+**Prompt:** `Split seeds per J6: idempotent reference-data seeds in db/seeds.rb, and a development-only demo:seed task generating about 10,000 deterministic synthetic employees with salary histories per docs/database-design.md §9. Review every integrity rule against the implemented schema. Document seed and reset commands.`
+**Tasks:**
+1. `db/seeds.rb`: `upsert_all` of countries, departments, and currencies from design §8. Safe to rerun and safe in production.
+2. `lib/tasks/demo.rake` (`demo:seed`, `demo:reset`): refuses unless `Rails.env.development?`; fixed random seed (42); 10,000 employees across all countries and statuses; about 5% paid in USD; about 60% with one record, 38% with 2–4, 2% future-dated, 1% with none; history rows built already closed; `insert_all` in batches of 1,000 inside one transaction; refuses if employees exist unless reset.
+3. Integrity review: a table of I1–I13 → where it is enforced → which test proves it; any gaps fixed or recorded.
+4. Verify after seeding: counts per country, currency, and status; zero overlapping periods (SQL check); at most one open record per employee; scale matches `minor_units`; runtime recorded.
+5. README "Sample data" section with the seed, demo, and reset commands.
+
+**Deliverables:** Reference seeds, demo seed task, integrity checklist, and README instructions.
+**Acceptance:** `db:seed` is idempotent (a second run changes 0 rows); `demo:seed` produces the same counts on every run; the SQL integrity checks return zero violations; `demo:seed` refuses to run in production.
 **Status:** Not Started
 
-### 3.2 Salary records and history
-**Prompt:** `Implement salary records using the approved effective-date and history design. Store monetary amounts with decimal precision and currency separately. Preserve previous salary records when compensation changes. Add appropriate constraints, indexes, factories, and model tests. Do not calculate payroll, tax, or net pay.`
-**Deliverables:** Salary model, migrations/constraints, factories, and tests.
-**Acceptance:** Salary history is retained; invalid amounts, currencies, and date ranges are rejected according to documented rules.
-**Status:** Not Started
-
-### 3.3 Database integrity and seed data
-**Prompt:** `Review database constraints and create repeatable synthetic seed data for representative employees, countries, departments, currencies, and salary histories. Ensure seeds are safe to rerun or document reset behavior.`
-**Deliverables:** Constraints review, seed generator, and seed instructions.
-**Acceptance:** Seed data loads predictably and covers multi-country, multi-currency, and salary-history scenarios.
-**Status:** Not Started
-
-**Phase gate:** Schema and domain behavior are verified by model tests and repeatable seeds.
+**Phase gate:** Schema and domain behaviour are verified by model and service tests, the constraints survive the `schema.rb` round-trip, reference seeds are idempotent, and demo data loads deterministically with zero integrity violations.
 
 ---
 
@@ -500,12 +579,23 @@ Re-checked against `backend/` as it is now and the updated docs. Items G1–G9 a
 | 2026-09-28 | 2 (H decisions) | Owner approved H1 (API base controller on `ActionController::Base`, JSON-only, no `allow_browser`) and H3 (development and test use only the `primary` database role). H2 was already fixed by the owner | Read `backend/.env.example`: variable names `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT` match `database.yml`. No file changed except this plan | Apply H3 in `database.yml` and the H1 doc alignment when instructed |
 | 2026-09-28 | 2.2 (H1 docs) | Aligned docs with H1: architecture v2.2 (G1 banner now records the full-stack app with a JSON-only API; code layout adds `base_controller` on `ActionController::Base` and `health_controller` on `ActionController::API`; §5 adds a controller-base bullet, drops "added back to the API-only middleware stack", and the default-deny rule no longer lists `/health` as an opt-out). ADR 004: session decision, default-deny rule, and consequences updated | Documentation only; grep confirms no remaining "API-only middleware" wording | H3 `database.yml` edit still pending instruction |
 | 2026-09-28 | 2.1 | Added root `.gitignore` (`.DS_Store`, `.env`); rewrote root `README.md` (overview, layout, prerequisites, `.env` variables, setup, run, test, docs links, out of scope); replaced the generated `backend/README.md` with a pointer; added a "Current Plan" section to `CLAUDE.md`. Corrected the 2.1 deliverable wording for G8 | `git check-ignore`: `backend/.env`, `backend/config/master.key`, `backend/log/x.log`, `.DS_Store`, `docs/.DS_Store` ignored; README not ignored. `.env.example` names equal `database.yml` `DB_*` names. No `.env` or `master.key` tracked; no hard-coded credential patterns found (`database.yml` `root` fallbacks are inside `ENV.fetch`, G5 kept). All README links resolve. `bundle check` satisfied; `bin/rails test` → 0 runs, 0 failures (Ruby 3.2.0). `db:prepare` not run | Owner: commit; decide when to apply H3 (2.2) |
+| 2026-09-28 | 2.2 | H3 (primary-only dev/test DB roles), E8 (UTC, filter params), `DatabaseHealth.up?`, `Api::V1::HealthController < ActionController::API` with jbuilder view, `GET /api/v1/health` route. Found that json 3.0.2 breaks ActiveSupport 8.0 JSON encoding (`unknown keyword: quirks_mode`); the lockfile now resolves json 2.6.3 with `json (< 3)`, while the Gemfile line was reverted. Marked Done by owner | `rails runner`: `time_zone=UTC`; 7 sensitive keys filtered, `currency_code` not; configs dev=`primary`, test=`primary`, prod=`primary,queue,cache`; `DatabaseHealth.up?` = true. `rails routes`: `/api/v1/health` → `api/v1/health#show` (json), `/up` kept. HTTP on the owner's server (:3000): `{"data":{"status":"ok","database":"ok"}}`, 200, `application/json`. Claude's own servers (:3101/:3102) hit the json 3.0.2 error before the lockfile change; 503 not verified over HTTP | Restore `gem "json", "< 3"` in Gemfile + ADR 005 note; update README health line; owner commits |
+| 2026-09-28 | 2.3 | Added `test/integration/api/v1/health_test.rb` (200 body, 503 body via `DatabaseHealth.up?` swap, no extra keys). README "Testing and quality" expanded (single-file/single-test commands, test DB, parallel-worker DBs, test layout). `CLAUDE.md` gains a "Commands" section | Ran under the owner's gemset `ruby-3.2.0@salary-mgn-3.2.0` (json 2.21.2; the default gemset lacks it). Test DB `salary_management_test` reachable. `bin/rails test`: 3 runs, 6 assertions, **1 failure** (503 test → 200, commented `render` line). `bin/rubocop`: 28 files, **4 offences**, none in the new test. `bin/brakeman`: 0 errors, **2 warnings** (Ruby 3.2.0 EOL, Rails 8.0.5.1 support end) | Owner: restore the `render … status:` line (or confirm always-200); approve RuboCop fixes; accept or act on the Brakeman support warnings |
+| 2026-09-28 | 2.3 (render restored) | Owner approved restoring `render :show, status: @database_up ? :ok : :service_unavailable` in `HealthController` | `bin/rails test`: 3 runs, 7 assertions, 0 failures. `bin/rubocop`: 28 files, 3 offences (Gemfile ×2, jbuilder final newline) | Remaining for 2.3: owner OK for RuboCop fixes; decision on Brakeman support warnings |
+| 2026-09-28 | 2.3 (close) | Owner approved RuboCop fixes and accepted Brakeman support warnings. `bin/rubocop -a` on `Gemfile` (`# gem "sqlite3"` comment spacing, `"dotenv-rails"` quotes) and `show.json.jbuilder` (final newline). Added `config/brakeman.ignore` with notes for the EOL Ruby and Rails warnings. ADR 005 records the accepted warnings and the `json < 3` constraint. 2.3 Done; Phase 2 gate passed | Gemset `ruby-3.2.0@salary-mgn-3.2.0`: `bin/rails test` exit 0 (3 runs, 7 assertions, 0 failures); `bin/rubocop` exit 0 (28 files, no offences); `bin/brakeman --no-pager` exit 0 (0 security warnings, 2 ignored, 0 errors); `bundle check` satisfied after the Gemfile edits | Owner: commit; fix the README health line (2.2 follow-up d) when convenient |
+| 2026-09-28 | 3 (review) | Reviewed Phase 3 against the database design, ADRs 002/003/005, requirements, API spec, and the Phase 2 outcome. Recorded decisions J1–J14, assumptions, dependencies, and risks. Rewrote 3.1–3.3 with concrete tasks and acceptance criteria: salary services move into 3.2 (J7); seeds split into reference and development-only demo data (J6) | Read-only: dev and test databases are `utf8mb4_unicode_ci` on MySQL 8.4.10 with no domain tables; no `db/migrate`; no factory_bot or faker. No code written | Owner: decide J1 (factory_bot and faker, plus fixtures for reference data) and J2 (may Claude run `db:migrate` and `db:test:prepare`?); approve J3–J14 |
+| 2026-09-28 | 3 (J decisions) | Owner approved J1 (factory_bot_rails and faker; fixtures for reference data, factories for employees and salaries) and J2 (Claude may run `db:migrate` and `db:test:prepare`) | Plan update only | J3–J14 defaults not yet explicitly confirmed |
+| 2026-09-28 | 3.1 | Added factory_bot_rails (test) and faker (dev/test). Migrations for countries, departments, currencies (string PK `code`), employees (FKs, CHECK on status, indexes). Models with normalisation, enum, validations, restrict-delete. Reference fixtures (8 countries, 8 departments, 7 currencies), employee factory, 34 model tests. Database design §3 types updated to VARCHAR (J3) and §9 now uses `insert_all!`; ADR 005 lists the new gems | `bundle install` added only factory_bot 6.6.0, factory_bot_rails 6.5.1, faker 3.8.0. `db:migrate` (dev), `db:test:prepare` (test tables and 2 CHECK constraints present), `db:migrate:redo STEP=4` (schema.rb identical). `bin/rails test`: 37 runs, 79 assertions, 0 failures (3 initial failures fixed: MySQL `insert_all` skips duplicates, switched tests to `insert_all!`). `bin/rubocop`: 41 files, no offences. `bin/brakeman`: 0 warnings, 2 ignored | Owner: confirm the J3/J4/J5/J14 defaults; commit |
+| 2026-09-28 | 3 (J decisions) | Owner approved J3 (VARCHAR codes), J4 (string-backed status enum), J5 (normalisation), and J14 (restrict-delete), all already implemented in 3.1 | Plan update only | J6–J13 (mostly 3.2 and 3.3) not yet explicitly confirmed |
+| 2026-09-28 | 3 (J decisions) | Owner approved J6–J13: seed split (J6), salary services in 3.2 (J7), read-only columns (J8), scale vs `minor_units` (J9), I13 both directions in 3.2 (J10), direct DB-guard tests (J11), `travel_to` in date tests (J12), `schema.rb` with round-trip checks (J13). All Phase 3 decisions are now resolved | Plan update only | — |
 
 ## Current progress
-- **Current phase:** Phase 1 — Backend requirements and design — **Done (gate passed 2026-09-28)**
-- **Next phase:** Phase 2 — Repository and Rails foundation. Review findings recorded; tasks 2.1–2.3 proposed.
-- **Current subphases:** 2.1 Done; 2.2 In Progress (scaffold done by the owner); 2.3 Not Started. H1 and H3 approved, H2 done. Next: apply H3 and the rest of 2.2. H7 commit is an owner action.
-- **Overall status:** Phase 1 complete; Phase 2 in progress
+- **Phase 1** — Backend requirements and design — **Done (gate passed 2026-09-28)**
+- **Phase 2** — Repository and Rails foundation — **Done (gate passed 2026-09-28)**. 2.1, 2.2, 2.3 Done. Carried-over follow-ups: README health line; `db:prepare` (owner).
+- **Phase 3** — Domain models and persistence — reviewed 2026-09-28; tasks 3.1–3.3 proposed.
+- **Current subphases:** 3.1 Done (2026-09-28); 3.2 and 3.3 Not Started.
+- **Next subphase:** 3.2 — Salary records, history services, and employee creation (awaiting instruction)
+- **Overall status:** Phases 1–2 complete
 
 ## Future work
 Frontend phases will be added after the backend/API scope and implementation are complete or stable.

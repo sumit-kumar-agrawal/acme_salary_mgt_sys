@@ -30,7 +30,7 @@ The project owner generated `backend/` with the Rails 8 default generator, not t
 | `solid_cache` | MySQL-backed `Rails.cache`. Also serves as the store for login `rate_limit` (ADR 004), so no Redis is needed |
 | `solid_queue` | MySQL-backed Active Job adapter. No jobs are planned; kept as the Rails 8 default with no extra infrastructure |
 
-**Adopted development/test gems:** `debug`, `brakeman` (security scan), `rubocop-rails-omakase` (style), `web-console`. Test-only: `capybara`, `selenium-webdriver`.
+**Adopted development/test gems:** `debug`, `brakeman` (security scan), `rubocop-rails-omakase` (style), `faker` (synthetic data for factories and development demo seeds; added 2026-09-28, J1), `web-console`. Test-only: `capybara`, `selenium-webdriver`, `factory_bot_rails` (factories for employees and salary records; added 2026-09-28, J1). Reference data in tests comes from Rails fixtures.
 
 **Backend test framework:** Minitest, as generated (`backend/test/`, run with `bin/rails test`). The owner reverted G2 on 2026-09-28. `rspec-rails` is not used.
 
@@ -39,7 +39,6 @@ The project owner generated `backend/` with the Rails 8 default generator, not t
 | Gem | When | Justification |
 |---|---|---|
 | `bcrypt` | 4.1 | `has_secure_password` (ADR 004). Present in the Gemfile but commented out |
-| `factory_bot_rails`, `faker` | 3.1 | Factories and synthetic data per the testing rules (FactoryBot works with Minitest) |
 
 **Removed on 2026-09-28:** `solid_cable` and `db/cable_schema.rb` (G3: no WebSocket use case; production Action Cable uses the in-process `async` adapter).
 
@@ -55,6 +54,8 @@ The project owner generated `backend/` with the Rails 8 default generator, not t
 ## Consequences
 
 - **Ruby 3.2 is past its end of life.** Ruby 3.2's security maintenance was scheduled to end on 2026-03-31, and `3.2.0` is its first patch release. This is acceptable only for an assessment with synthetic data. The owner kept 3.2.0 (G6); move to a supported Ruby before any real data is used.
+- **Brakeman support warnings accepted (owner, 2026-09-28):** "Ruby 3.2.0 support ended 2026-03-31" (High) and "Rails 8.0.5.1 support ends 2026-11-07" (Weak). Both are recorded with notes in `backend/config/brakeman.ignore`, so `bin/brakeman` still reports any new warning. Plan a Ruby and Rails upgrade before real data is used or before 2026-11-07 if the project continues.
+- `json` is constrained to `< 3` in the Gemfile: json 3.x removed the `quirks_mode` option that ActiveSupport 8.0 still passes, which breaks JSON rendering. Remove the constraint once Rails supports json 3.
 - Rails 8's built-in `rate_limit` and Solid Cache replace the in-process cache concern noted in the architecture.
 - JSON shapes live in `app/views/api/v1/**/*.json.jbuilder`, and the rounding of monetary aggregates happens there.
 - Any further gem needs an amendment to this ADR with a justification.

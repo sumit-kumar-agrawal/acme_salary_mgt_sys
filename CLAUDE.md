@@ -54,6 +54,15 @@ Do not implement excluded features unless requirements are explicitly changed an
 
 Backend work follows BACKEND_PLAN.md (phases, decisions, status, and completion log). Its backend phases supersede those in PROJECT_DEV_PLAN.md.
 
+## Commands
+
+Run from `backend/` with RVM Ruby 3.2.0 (gemset `ruby-3.2.0@salary-mgn-3.2.0`):
+
+- Tests: `bin/rails test` (single file: `bin/rails test path/to/file_test.rb`)
+- Style: `bin/rubocop`
+- Security scan: `bin/brakeman --no-pager`
+- Server: `bin/rails server` (health check: `GET /api/v1/health`)
+
 ## Workflow
 
 1. Read docs/requirements.md before implementation.
