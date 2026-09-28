@@ -15,6 +15,12 @@ integrations, advanced RBAC/approvals, chatbot/LLM/RAG, microservices, and
 advanced multi-region DR are excluded unless requirements are formally
 changed.
 
+> **Superseded for backend work (2026-09-28):** `BACKEND_PLAN.md` governs all
+> backend requirements, design, Rails, database, API, and backend-test work.
+> Phase 1, subphases 2.1–2.2, and Phase 3 below are superseded and kept for
+> reference only. Subphases 2.3–2.4 (React foundation and local integration)
+> remain here until a separate frontend plan replaces them.
+
 ## How to use this plan
 
 1. Read CLAUDE.md, docs/requirements.md, and this file before work.
@@ -28,7 +34,7 @@ Status: Not Started / In Progress / Blocked / Done
 
 ---
 
-## Phase 1 — Requirements and design
+## Phase 1 — Requirements and design _(superseded by BACKEND_PLAN.md Phase 1)_
 
 Goal: Produce an implementation-ready design before coding
 
@@ -41,7 +47,7 @@ Goal: Produce an implementation-ready design before coding
 - **Deliverables:** Requirements checklist and open questions.
 - **Acceptance:** Every feature maps to an agreed requirement; exclusions
   are explicit.
-- **Status:** Not Started
+- **Status:** Superseded by BACKEND_PLAN.md (2026-09-28)
 
 ### 1.2 Architecture
 
@@ -53,7 +59,7 @@ Goal: Produce an implementation-ready design before coding
 - **Deliverables:** Architecture document and component/data-flow diagram.
 - **Acceptance:** Covers all in-scope use cases without microservices or
   RAG.
-- **Status:** Not Started
+- **Status:** Superseded by BACKEND_PLAN.md (2026-09-28)
 
 ### 1.3 Database design
 
@@ -65,7 +71,7 @@ Goal: Produce an implementation-ready design before coding
 - **Deliverables:** ERD and database design.
 - **Acceptance:** Supports employee search, salary history, and required
   reporting; amount and currency remain associated.
-- **Status:** Not Started
+- **Status:** Superseded by BACKEND_PLAN.md (2026-09-28)
 
 ### 1.4 API contract
 
@@ -76,7 +82,7 @@ Goal: Produce an implementation-ready design before coding
 - **Deliverables:** API specification.
 - **Acceptance:** Every UI workflow has a documented API and clear
   currency/effective-date semantics.
-- **Status:** Not Started
+- **Status:** Superseded by BACKEND_PLAN.md (2026-09-28)
 
 Phase gate: Review and approve requirements, architecture, schema, and API
 contract.
@@ -87,16 +93,16 @@ contract.
 
 Goal: Create reproducible, bootable applications.
 
-### 2.1 Repository setup
+### 2.1 Repository setup _(superseded by BACKEND_PLAN.md 2.1)_
 
 - **Prompt:** Set up the repository structure from CLAUDE.md and this
   plan. Add README, .gitignore, and .env.example. Do not implement
   business features or commit secrets.
 - **Deliverables:** Project structure and setup documentation.
 - **Acceptance:** Clean setup instructions; secrets excluded.
-- **Status:** Not Started
+- **Status:** Superseded by BACKEND_PLAN.md (2026-09-28)
 
-### 2.2 Rails API foundation
+### 2.2 Rails API foundation _(superseded by BACKEND_PLAN.md 2.2–2.3)_
 
 - **Prompt:** Initialize the Rails API in backend/ with MySql, environment
   configuration, a health endpoint, and RSpec. Add a baseline request test
@@ -104,7 +110,7 @@ Goal: Create reproducible, bootable applications.
   models yet.
 - **Deliverables:** Bootable API and baseline test.
 - **Acceptance:** App boots; health endpoint and test pass.
-- **Status:** Not Started
+- **Status:** Superseded by BACKEND_PLAN.md (2026-09-28)
 
 ### 2.3 React foundation
 
@@ -129,7 +135,7 @@ Phase gate: Both applications boot and baseline checks pass.
 
 ---
 
-## Phase 3 — Backend domain and APIs
+## Phase 3 — Backend domain and APIs _(superseded by BACKEND_PLAN.md Phases 3–4)_
 
 Goal: Implement tested employee and salary management.
 
@@ -141,7 +147,7 @@ Goal: Implement tested employee and salary management.
   data only. Do not add payroll or unrelated entities.
 - **Deliverables:** Migrations, models, factories/seeds, model specs.
 - **Acceptance:** Migrations run and salary-history behavior is tested.
-- **Status:** Not Started
+- **Status:** Superseded by BACKEND_PLAN.md (2026-09-28)
 
 ### 3.2 Employee APIs
 
@@ -152,7 +158,7 @@ Goal: Implement tested employee and salary management.
 - **Deliverables:** Employee endpoints and request specs.
 - **Acceptance:** API contract, filtering, pagination, validation, and
   access behavior are tested.
-- **Status:** Not Started
+- **Status:** Superseded by BACKEND_PLAN.md (2026-09-28)
 
 ### 3.3 Salary and history APIs
 
@@ -163,7 +169,7 @@ Goal: Implement tested employee and salary management.
 - **Deliverables:** Salary endpoints and tests.
 - **Acceptance:** Current and historical records behave correctly; invalid
   changes are rejected.
-- **Status:** Not Started
+- **Status:** Superseded by BACKEND_PLAN.md (2026-09-28)
 
 ### 3.4 Authentication and authorization
 
@@ -173,6 +179,6 @@ Goal: Implement tested employee and salary management.
   and unauthorized access. Do not build advanced RBAC or approvals.
 - **Deliverables:** Authentication and access-control tests.
 - **Acceptance:** Protected endpoints reject unauthorized requests.
-- **Status:** Not Started
+- **Status:** Superseded by BACKEND_PLAN.md (2026-09-28)
 
 Phase gate: Employee and salary APIs work and relevant backend tests pass.

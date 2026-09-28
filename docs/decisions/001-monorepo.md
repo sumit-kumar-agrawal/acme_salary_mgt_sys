@@ -1,7 +1,7 @@
 # ADR 001: Use a Monorepo for the Assessment
 
-- **Status:** Proposed
-- **Date:** 2026-09-28
+- **Status:** Accepted
+- **Date:** 2026-09-28 (accepted in BACKEND_PLAN.md task 1.5; `backend/` is built first, `frontend/` follows under a separate plan)
 - **Decision owners:** Project team
 
 ## Context
