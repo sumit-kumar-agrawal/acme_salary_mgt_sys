@@ -20,10 +20,6 @@ development:
     <<: *default
     database: <%= ENV.fetch("DB_NAME", "salary_management") %>
     migrations_paths: db/cache_migrate
-  cable:
-    <<: *default
-    database: <%= ENV.fetch("DB_NAME", "salary_management") %>
-    migrations_paths: db/cable_migrate
 
 # Warning: The database defined as "test" will be erased and
 # re-generated from your development database when you run "rake".
@@ -50,7 +46,3 @@ production:
     <<: *default
     database: <%= ENV.fetch("DB_NAME", "salary_management") %>
     migrations_paths: db/cache_migrate
-  cable:
-    <<: *default
-    database: <%= ENV.fetch("DB_NAME", "salary_management") %>
-    migrations_paths: db/cable_migrate
