@@ -1,0 +1,8 @@
+# Repository-level ignores. Backend-specific paths (log/, tmp/, .env*, config/master.key)
+# are handled by backend/.gitignore.
+
+# macOS metadata
+.DS_Store
+
+# Local environment files anywhere in the repo
+.env

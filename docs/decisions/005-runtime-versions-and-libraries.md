@@ -1,0 +1,60 @@
+# ADR 005: Runtime Versions and Backend Libraries
+
+- **Status:** Accepted (revised 2026-09-28 to match the generated application)
+- **Date:** 2026-09-28
+- **Related:** BACKEND_PLAN.md D25, D26 and Phase 2 findings (E and G items); `.claude/rules/backend.md` ("Use JSON builder for API responses", "Do not add dependencies without justification")
+
+## Context
+
+The project owner generated `backend/` with the Rails 8 default generator, not the API-only Rails 7.2 setup this ADR originally proposed. This revision records what was generated, marks what is adopted, and lists what still needs a decision. The earlier version (Ruby 3.1.2 / Rails 7.2, no serializer or pagination gems) is superseded.
+
+## Decision
+
+**Versions**
+
+| Component | Version | Source |
+|---|---|---|
+| Ruby | 3.2.0 via RVM | `backend/.ruby-version` |
+| Rails | 8.0.5.1 (`~> 8.0.5`) | `Gemfile`, `Gemfile.lock` |
+| MySQL | 8.4 local (8.0.16+ required for CHECK constraints) | Homebrew service |
+| Rails defaults | `config.load_defaults 8.0` | `config/application.rb` |
+
+**Adopted runtime gems**
+
+| Gem | Justification |
+|---|---|
+| `mysql2`, `puma`, `bootsnap`, `tzinfo-data` | Rails defaults for the database adapter, app server, and boot performance |
+| `jbuilder` | JSON response rendering, replacing the planned plain-Ruby serializers; required by `.claude/rules/backend.md` |
+| `pagy` (~> 43.0) | Pagination for employee and report listings, replacing the planned hand-rolled concern |
+| `dotenv-rails` | Loads the local `.env` file (owner decision E3). Kept in the default group by owner decision (G4) |
+| `solid_cache` | MySQL-backed `Rails.cache`. Also serves as the store for login `rate_limit` (ADR 004), so no Redis is needed |
+| `solid_queue` | MySQL-backed Active Job adapter. No jobs are planned; kept as the Rails 8 default with no extra infrastructure |
+
+**Adopted development/test gems:** `debug`, `brakeman` (security scan), `rubocop-rails-omakase` (style), `web-console`. Test-only: `capybara`, `selenium-webdriver`.
+
+**Backend test framework:** Minitest, as generated (`backend/test/`, run with `bin/rails test`). The owner reverted G2 on 2026-09-28. `rspec-rails` is not used.
+
+**Still to add, in the subphase that first needs them**
+
+| Gem | When | Justification |
+|---|---|---|
+| `bcrypt` | 4.1 | `has_secure_password` (ADR 004). Present in the Gemfile but commented out |
+| `factory_bot_rails`, `faker` | 3.1 | Factories and synthetic data per the testing rules (FactoryBot works with Minitest) |
+
+**Removed on 2026-09-28:** `solid_cable` and `db/cable_schema.rb` (G3: no WebSocket use case; production Action Cable uses the in-process `async` adapter).
+
+**Generated and kept as is by owner decision (2026-09-28)**
+
+| Item | Issue | Decision ID |
+|---|---|---|
+| `propshaft`, `importmap-rails`, `turbo-rails`, `stimulus-rails`, `app/views` layouts, `app/assets`, `app/javascript` | Full-stack server-rendered frontend. CLAUDE.md specifies a separate React frontend and the architecture is an API-only backend | G1 |
+| `kamal`, `thruster`, `Dockerfile`, `.kamal/`, `backend/.github/` | Deployment and CI artefacts, unused until the owner's Docker phase. `.github/` inside `backend/` is ignored by GitHub | G3 |
+
+**Deliberately not added:** Devise, JWT, Pundit (ADR 004); Redis and Sidekiq (Solid Cache and Solid Queue cover the needs); `rack-cors` (same-site frontend, ADR 004).
+
+## Consequences
+
+- **Ruby 3.2 is past its end of life.** Ruby 3.2's security maintenance was scheduled to end on 2026-03-31, and `3.2.0` is its first patch release. This is acceptable only for an assessment with synthetic data. The owner kept 3.2.0 (G6); move to a supported Ruby before any real data is used.
+- Rails 8's built-in `rate_limit` and Solid Cache replace the in-process cache concern noted in the architecture.
+- JSON shapes live in `app/views/api/v1/**/*.json.jbuilder`, and the rounding of monetary aggregates happens there.
+- Any further gem needs an amendment to this ADR with a justification.
