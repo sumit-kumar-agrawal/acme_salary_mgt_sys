@@ -1,0 +1,24 @@
+# Reference departments (docs/database-design.md §8).
+engineering:
+  name: Engineering
+
+finance:
+  name: Finance
+
+human_resources:
+  name: Human Resources
+
+marketing:
+  name: Marketing
+
+operations:
+  name: Operations
+
+sales:
+  name: Sales
+
+legal:
+  name: Legal
+
+customer_support:
+  name: Customer Support

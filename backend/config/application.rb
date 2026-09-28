@@ -21,7 +21,8 @@ module Backend
     # These settings can be overridden in specific environments using the files
     # in config/environments, which are processed later.
     #
-    # config.time_zone = "Central Time (US & Canada)"
+    # Effective dates and "today" are evaluated in UTC (docs/architecture.md §8, D9).
+    config.time_zone = "UTC"
     # config.eager_load_paths << Rails.root.join("extras")
   end
 end

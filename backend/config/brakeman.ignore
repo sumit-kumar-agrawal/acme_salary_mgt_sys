@@ -1,0 +1,23 @@
+{
+  "ignored_warnings": [
+    {
+      "warning_type": "Unmaintained Dependency",
+      "fingerprint": "edf687f759ec9765bd5db185dbc615c80af77d6e7e19386fc42934e7a80307af",
+      "check_name": "EOLRuby",
+      "message": "Support for Ruby 3.2.0 ended on 2026-03-31",
+      "file": ".ruby-version",
+      "confidence": "High",
+      "note": "Accepted by project owner on 2026-09-28 for the assessment (synthetic data only). See ADR 005 and BACKEND_PLAN.md G6. Revisit before any real data is used."
+    },
+    {
+      "warning_type": "Unmaintained Dependency",
+      "fingerprint": "21ab0fe00fdd5899ffc405cff75aadb91b805ee996a614f7e27b08a287e9062d",
+      "check_name": "EOLRails",
+      "message": "Support for Rails 8.0.5.1 ends on 2026-11-07",
+      "file": "Gemfile.lock",
+      "confidence": "Weak",
+      "note": "Accepted by project owner on 2026-09-28 for the assessment. See ADR 005. Plan an upgrade before 2026-11-07 if the project continues."
+    }
+  ],
+  "brakeman_version": "8.0.6"
+}

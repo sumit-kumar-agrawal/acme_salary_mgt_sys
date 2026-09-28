@@ -5,7 +5,7 @@ gem "rails", "~> 8.0.5"
 # The modern asset pipeline for Rails [https://github.com/rails/propshaft]
 gem "propshaft"
 # Use sqlite3 as the database for Active Record
-#gem "sqlite3", ">= 2.1"
+# gem "sqlite3", ">= 2.1"
 gem "mysql2"
 
 # Use the Puma web server [https://github.com/puma/puma]
@@ -18,6 +18,7 @@ gem "turbo-rails"
 gem "stimulus-rails"
 # Build JSON APIs with ease [https://github.com/rails/jbuilder]
 gem "jbuilder"
+gem "json", "< 3"
 
 # Use Active Model has_secure_password [https://guides.rubyonrails.org/active_model_basics.html#securepassword]
 # gem "bcrypt", "~> 3.1.7"
@@ -29,7 +30,7 @@ gem "tzinfo-data", platforms: %i[ windows jruby ]
 gem "solid_cache"
 gem "solid_queue"
 
-gem 'dotenv-rails'
+gem "dotenv-rails"
 gem "pagy", "~> 43.0"
 
 # Reduces boot times through caching; required in config/boot.rb
@@ -53,6 +54,9 @@ group :development, :test do
 
   # Omakase Ruby styling [https://github.com/rails/rubocop-rails-omakase/]
   gem "rubocop-rails-omakase", require: false
+
+  # Synthetic names and data for test factories and development demo seeds (ADR 005, J1)
+  gem "faker"
 end
 
 group :development do
@@ -64,4 +68,7 @@ group :test do
   # Use system testing [https://guides.rubyonrails.org/testing.html#system-testing]
   gem "capybara"
   gem "selenium-webdriver"
+
+  # Test factories for employees and salary records (ADR 005, J1)
+  gem "factory_bot_rails"
 end

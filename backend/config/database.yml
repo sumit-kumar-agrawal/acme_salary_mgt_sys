@@ -8,18 +8,12 @@ default: &default
   host: <%= ENV.fetch("DB_HOST", "localhost") %>
   port: <%= ENV.fetch("DB_PORT", "3306") %>
 
+# Development and test use only the primary database (BACKEND_PLAN.md H3):
+# Solid Cache and Solid Queue run only in production.
 development:
   primary:
     <<: *default
     database: <%= ENV.fetch("DB_NAME", "salary_management") %>
-  queue:
-    <<: *default
-    database: <%= ENV.fetch("DB_NAME", "salary_management") %>
-    migrations_paths: db/queue_migrate
-  cache:
-    <<: *default
-    database: <%= ENV.fetch("DB_NAME", "salary_management") %>
-    migrations_paths: db/cache_migrate
 
 # Warning: The database defined as "test" will be erased and
 # re-generated from your development database when you run "rake".
@@ -29,10 +23,6 @@ test:
   primary:
     <<: *default
     database: salary_management_test
-  queue:
-    <<: *default
-    database: salary_management_test
-    migrations_paths: db/queue_migrate
 
 production:
   primary:

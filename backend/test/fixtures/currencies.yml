@@ -1,0 +1,35 @@
+# Reference currencies (docs/database-design.md §8). JPY and KWD exercise 0 and 3 minor units.
+usd:
+  code: USD
+  name: US Dollar
+  minor_units: 2
+
+gbp:
+  code: GBP
+  name: Pound Sterling
+  minor_units: 2
+
+eur:
+  code: EUR
+  name: Euro
+  minor_units: 2
+
+inr:
+  code: INR
+  name: Indian Rupee
+  minor_units: 2
+
+jpy:
+  code: JPY
+  name: Japanese Yen
+  minor_units: 0
+
+sgd:
+  code: SGD
+  name: Singapore Dollar
+  minor_units: 2
+
+kwd:
+  code: KWD
+  name: Kuwaiti Dinar
+  minor_units: 3

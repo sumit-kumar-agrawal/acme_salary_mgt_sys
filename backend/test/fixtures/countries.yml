@@ -1,0 +1,32 @@
+# Reference countries (docs/database-design.md §8).
+united_states:
+  code: US
+  name: United States
+
+united_kingdom:
+  code: GB
+  name: United Kingdom
+
+germany:
+  code: DE
+  name: Germany
+
+france:
+  code: FR
+  name: France
+
+india:
+  code: IN
+  name: India
+
+japan:
+  code: JP
+  name: Japan
+
+singapore:
+  code: SG
+  name: Singapore
+
+kuwait:
+  code: KW
+  name: Kuwait
