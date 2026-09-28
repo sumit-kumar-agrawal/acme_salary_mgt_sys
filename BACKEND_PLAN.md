@@ -210,12 +210,12 @@ Inputs: Phase 1 documents, `CLAUDE.md`, `.claude/rules/*`, the repository, the l
 | Rails | **8.0.5.1** (`~> 8.0.5`), `config.load_defaults 8.0`. Generated with the **full-stack default**, not `--api`. |
 | Gems | Adopted: mysql2, puma, jbuilder, pagy 43, dotenv-rails, solid_cache, solid_queue, brakeman, rubocop-rails-omakase. Pending decisions: propshaft, importmap, turbo, stimulus, solid_cable, kamal, thruster, capybara, selenium-webdriver (see G1–G3). `bcrypt` is commented out. |
 | Database | Local Homebrew MySQL 8.4 on 3306. `database.yml` uses `ENV.fetch` for `DB_USERNAME`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, and `DB_NAME`, with `utf8mb4_unicode_ci`. Databases are `salary_management` and `salary_management_test`. In development, the queue, cache, and cable roles share the primary database. **The fallback credentials are `root`/`root`** (G5). |
-| Env | `backend/.env` exists (ignored). `backend/.env.example` exists but is empty, and is also ignored by the generated `/.env*` rule. |
+| Env | `backend/.env` exists (ignored). `backend/.env.example` now lists `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, but is still ignored by `/.env*` (G8 kept), and **`DB_USER` does not match `DB_USERNAME`** in `database.yml` (H2). |
 | Routes | Only the generated `GET /up`. No `/api/v1/health` yet. |
 | Config | `time_zone` not set; `filter_parameters` still the Rails 8 defaults (these already include `email`). |
-| Tests | Minitest `test/` tree with system tests. No RSpec. |
+| Tests | Minitest (owner decision; G2 reverted). `test_helper.rb` runs tests in parallel (`parallelize(workers: :number_of_processors)`) with `fixtures :all`. `minitest` 6.0.6 in the lockfile. |
 | Deploy/CI | `Dockerfile`, `.kamal/`, `config/deploy.yml`, and `backend/.github/` generated. GitHub ignores `.github/` inside a subfolder. |
-| Git | Owner-managed. `backend/` is tracked (106 files) with no nested `.git`. `master.key`, `.env`, and `log`/`tmp` contents are **not** tracked. There is no root `.gitignore`. `.idea/` is still staged. |
+| Git | Owner-managed. Latest commit `8e3cb86`. `backend/` and `.idea/` are tracked. **Uncommitted:** the G3 changes (Gemfile, lockfile, `cable.yml`, `database.yml`, deleted `cable_schema.rb`) and the untracked **ADRs 004 and 005**. No root `.gitignore`; `.DS_Store` untracked. No `db/schema.rb` yet, so `db:prepare` has not run. |
 
 #### A. Decisions: status after the scaffold
 
@@ -234,7 +234,7 @@ Inputs: Phase 1 documents, `CLAUDE.md`, `.claude/rules/*`, the repository, the l
 | E11 | Single README | **Open:** the generated `backend/README.md` is a stub; the root README is still one paragraph. |
 | E12 | CLAUDE.md pointer and commands | **Open.** |
 | E13 | CI | **Deferred.** The generated `backend/.github/` is inert. |
-| E14 | Unstage `.idea/` and add a root `.gitignore` | **Open (owner).** |
+| E14 | Unstage `.idea/` and add a root `.gitignore` | **Superseded (owner):** `.idea/` is now committed. A root `.gitignore` for `.DS_Store` is still recommended. |
 | E15 | Commits | **Decided (owner):** the owner commits; Claude never commits. |
 
 #### B. New decisions raised by the scaffold
@@ -252,6 +252,23 @@ Inputs: Phase 1 documents, `CLAUDE.md`, `.claude/rules/*`, the repository, the l
 | G7 | Generated `/up` health route (was E6). | Remove it; keep the single documented `/api/v1/health` with a database check. | Kept as generated (owner) |
 | G8 | `backend/.env.example` is empty and ignored by the generated `/.env*` rule. | Add `!/.env.example` to `backend/.gitignore` and list the variable names with placeholder values (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `SECRET_KEY_BASE`, `HR_USER_EMAIL`, `HR_USER_PASSWORD`). | Kept as generated (owner) |
 | G9 | The test environment has no cache database, so `rate_limit` tests need a store. | Set `config.cache_store = :memory_store` in `test.rb` when 4.1 adds rate limiting. | 4.1 |
+
+#### B2. Re-review findings (2026-09-28, after the Minitest sync)
+
+Re-checked against `backend/` as it is now and the updated docs. Items G1–G9 above keep their recorded status.
+
+**Owner decisions (2026-09-28):** H1 and H3 approved. H2 already fixed by the owner (`.env.example` uses `DB_USERNAME`; all five names match `database.yml`).
+
+| ID | Finding | Recommendation | Needed by |
+|---|---|---|---|
+| H1 | **API controllers vs the full-stack app (G1 kept).** `ApplicationController < ActionController::Base` has `allow_browser versions: :modern` for HTML pages. The architecture assumes API-only; ADR 004 says session and CSRF middleware must be "added back", which is no longer true because full-stack Rails already has cookies, sessions, and CSRF. | `Api::V1::BaseController < ActionController::Base` (not `ApplicationController`), JSON-only (`before_action { request.format = :json }`), no `allow_browser`, `protect_from_forgery with: :exception`. Health stays on `ActionController::API` (E7). Update architecture §5 and ADR 004 consequences to match. | **Approved**; applied in 2.2 (docs) and 4.1 (base controller) |
+| H2 | **`.env.example` uses `DB_USER`, but `database.yml` reads `DB_USERNAME`.** A copied `.env.example` would silently fall back to the `root` user (G5 kept). | Rename to `DB_USERNAME` in `.env.example`. | **Done** (owner) |
+| H3 | **Solid Cache and Solid Queue share the primary database name in development and test** (`queue` and `cache` roles use the same `DB_NAME`, and test has a `queue` role). Each role dumps its own schema file from one physical database, so `schema.rb`, `queue_schema.rb`, and `cache_schema.rb` can each end up containing every table. Development and test don't use them anyway (dev cache is `:memory_store`, test is `:null_store`, and the dev and test job adapters are not Solid Queue). | Keep only the `primary` role in development and test; keep `queue` and `cache` roles in production only. Owner decision, because it edits `database.yml`. | **Approved**; apply in 2.2 before the first `db:prepare` |
+| H4 | **Parallel Minitest on MySQL** creates one database per worker (`salary_management_test-0…N`). This needs `CREATE` rights for the DB user (fine with root, which G5 keeps), and gives slower cold starts. | Keep parallel; document it in the README. If a least-privilege user is adopted later, grant it `CREATE` on `salary_management_test%`. | 2.3 |
+| H5 | **Stubbing the database for the 503 health test.** `minitest` 6.0.6 is in the lockfile; recent Minitest releases may no longer bundle `minitest/mock` (`Object#stub`). | Verify in 2.3. If unavailable, make the health check call a small `DatabaseHealth.up?` method and override it in the test, rather than adding a gem. | 2.3 |
+| H6 | **`db:prepare` has not run** (no `db/schema.rb`). | Owner runs `bin/rails db:prepare` after H3 is decided; the first `schema.rb` is committed by the owner. | 2.2 |
+| H7 | **ADRs 004 and 005 and the G3 changes are uncommitted.** Other committed docs already reference the ADRs. | Owner commits them. | Now |
+| H8 | **Rate limiting in development** uses `:memory_store` (per process), which is fine locally. Production uses Solid Cache. Test uses `:null_store`, so `rate_limit` never triggers (G9). | No change now; G9 still applies in 4.1. | 4.1 |
 
 #### C. Assumptions
 - The owner runs all git operations, database setup, and scaffolding; Claude edits files only on request.
@@ -283,35 +300,36 @@ Inputs: Phase 1 documents, `CLAUDE.md`, `.claude/rules/*`, the repository, the l
 **Prompt:** `Complete the repository skeleton around the owner-generated backend/: root .gitignore, backend/.env.example (G8), and README setup documentation. Never commit secrets. Do not run git commands (owner-managed).`
 **Tasks:**
 1. ~~Generate `backend/` and remove the nested git repository~~ Done by the owner.
-2. Root `.gitignore`: `.DS_Store`, `.idea/`, `.env`. Backend paths are already covered by `backend/.gitignore`. The owner unstages `.idea/` (E14).
-3. `backend/.gitignore`: add `!/.env.example`. Fill `backend/.env.example` with variable names and placeholder values only (G8).
-4. `README.md` (root): overview; repository layout; prerequisites (RVM, Ruby per `backend/.ruby-version`, MySQL 8.0.16+); database setup via `backend/.env`; run and test commands (filled in 2.2 and 2.3); links to docs and this plan. Replace `backend/README.md` with a pointer to the root README (E11).
-5. `CLAUDE.md`: add a "Current plan: BACKEND_PLAN.md" pointer (E12).
+2. ~~Root `.gitignore`: `.DS_Store` (and `.env`).~~ Done 2026-09-28. Backend paths are covered by `backend/.gitignore`; `.idea/` is tracked by owner choice (E14).
+3. ~~`backend/.env.example`: rename `DB_USER` to `DB_USERNAME` (H2).~~ Done by the owner. Tracking it via `!/.env.example` stays the owner's choice (G8 kept).
+4. ~~`README.md` (root): overview; repository layout; prerequisites; database setup via `backend/.env`; run and test commands; links to docs and this plan. Replace `backend/README.md` with a pointer to the root README (E11).~~ Done 2026-09-28. Because `.env.example` is ignored (G8), the README lists the `DB_*` variables itself so a fresh clone can be configured.
+5. ~~`CLAUDE.md`: add a "Current plan: BACKEND_PLAN.md" pointer (E12).~~ Done 2026-09-28 (new "Current Plan" section). The "Commands" part of E12 belongs to 2.3.
 
-**Deliverables:** Root `.gitignore`, a populated and trackable `backend/.env.example`, and updated `README.md` / `CLAUDE.md`.
-**Acceptance:** `git check-ignore` shows `backend/.env` and `backend/config/master.key` are ignored and `backend/.env.example` is **not**; no secrets in tracked files; the README setup steps work on a clean clone.
-**Status:** In Progress (the scaffold part is done by the owner; the remaining tasks await instruction)
+**Deliverables:** Root `.gitignore`, a populated `backend/.env.example` (local only; ignored per G8, with its variables documented in the README), and updated `README.md` / `CLAUDE.md`.
+**Acceptance:** `git check-ignore` shows `backend/.env` and `backend/config/master.key` are ignored; `.env.example` variable names match `database.yml`; no secrets in tracked files; the README setup steps work on a clean clone.
+**Status:** Done (2026-09-28). The clean-clone check was partial: `bundle install` and `bin/rails test` were verified; `db:prepare` was not run because it is the owner's step after H3 (task 2.2).
 
 ### 2.2 Rails application configuration and health endpoint
 **Prompt:** `Align the owner-generated Rails 8 app with the approved design per decisions G1, G3–G5, G7 and E8: API-only mode if approved, remove unused gems, harden database.yml, set UTC and filter_parameters, and add GET /api/v1/health with a database check (API spec §3). Do not add domain models, auth, or sessions.`
 **Tasks:**
 1. ~~`rails new backend` with MySQL~~ Done by the owner (Rails 8.0.5.1, full-stack default).
 2. ~~Apply G3: remove `solid_cable` and its config.~~ Done 2026-09-28 (gem, `db/cable_schema.rb`, `cable` entries in `database.yml` removed; production `cable.yml` uses `async`). G1 and G4 kept as generated (owner).
-3. ~~G5~~ Kept as generated (owner).
+3. ~~G5~~ Kept as generated (owner). Apply H3 (approved): development and test use only the `primary` role, before the first `db:prepare`.
 4. E8: `config.time_zone = "UTC"`; add `password`, `amount`, `salary`, `first_name`, `last_name`, `csrf_token` to `filter_parameters`.
-5. Keep `/up` (owner, G7); add the `api/v1/health` route and `Api::V1::HealthController` (`SELECT 1`, returning `200` or `503` as in API spec §3).
-6. `bin/rails db:prepare` for development and test; update the README run instructions.
+5. Keep `/up` (owner, G7); add the `api/v1/health` route and `Api::V1::HealthController < ActionController::API` (E7, H1), using a small `DatabaseHealth.up?` check (`SELECT 1`) and returning `200` or `503` as in API spec §3.
+6. Owner runs `bin/rails db:prepare` for development and test (H6); update the README run instructions.
+7. ~~Docs: align architecture §5 and ADR 004 with the full-stack base controller decision (H1).~~ Done 2026-09-28.
 
 **Deliverables:** A Rails 8 app configured per the design, with the health endpoint.
 **Acceptance:** `bin/rails db:prepare` succeeds; `curl localhost:3000/api/v1/health` returns `200` with the documented body, and `503` when MySQL is unreachable; no secrets tracked.
-**Status:** In Progress (scaffold done by the owner; configuration awaits G1, G3–G5, G7)
+**Status:** In Progress (scaffold done by the owner; G3 applied, G1/G4/G5/G7 kept). Remaining: E8 config, health endpoint, H1, H3, H6.
 
 ### 2.3 Minitest and quality baseline
 **Prompt:** `Using the generated Minitest setup (owner decision, G2 reverted), write integration tests for the health endpoint (200 and 503), and run the test suite, RuboCop (omakase), and Brakeman. Record exact commands and results in the README and completion log.`
 **Tasks:**
 1. ~~Replace Minitest with RSpec.~~ Reverted: the Minitest `test/` tree, `capybara`, and `selenium-webdriver` stay as generated.
-2. `test/integration/api/v1/health_test.rb`: `200` with the exact body; `503` when the connection raises; no version or environment keys.
-3. Run `bin/rails test`, `bin/rubocop`, and `bin/brakeman --no-pager`. Fix offences rather than disabling cops, and document any exception.
+2. `test/integration/api/v1/health_test.rb`: `200` with the exact body; `503` when `DatabaseHealth.up?` is forced false (H5); no version or environment keys.
+3. Run `bin/rails test`, `bin/rubocop`, and `bin/brakeman --no-pager`. Fix offences rather than disabling cops, and document any exception (the 2 pre-existing Gemfile offences need an owner OK). Note parallel test databases in the README (H4).
 4. README "Testing and quality" section and a `CLAUDE.md` "Commands" section (E12).
 
 **Deliverables:** Health integration tests and clean lint and security baselines.
@@ -478,11 +496,15 @@ Inputs: Phase 1 documents, `CLAUDE.md`, `.claude/rules/*`, the repository, the l
 | 2026-09-28 | 2.2 / 2.3 (G2, G3) | Owner chose G2 and G3; everything else kept as generated. G2: removed `capybara`, `selenium-webdriver`, and `backend/test/`; added `rspec-rails` and ran `rails generate rspec:install`. G3: removed `solid_cable`, `db/cable_schema.rb`, and the `cable` roles in `database.yml`; production `cable.yml` now uses `async`. Updated ADR 005 and the database-design header | Under Ruby 3.2.0 (RVM): `bundle install` completed (rspec-rails 8.0.4; solid_cable, capybara, selenium gone from the lockfile); `bundle exec rspec` → 0 examples, 0 failures; `bin/rails runner` boots Rails 8.0.5.1 with cable adapter `async`; `bin/rubocop` reports 2 pre-existing Gemfile offences (not changed) | Deletions left unstaged for the owner to commit. `backend/.github/workflows/ci.yml` still calls `bin/rails test test:system` (inert) |
 | 2026-09-28 | 2.3 (G2 revert) | Owner reverted G2: restored `backend/test/` from git; restored `capybara` and `selenium-webdriver`; removed `rspec-rails`, `.rspec`, and `spec/`. G3 changes kept. ADR 005 and task 2.3 updated for Minitest | Ruby 3.2.0: `bundle install` completed (lockfile has capybara and selenium, no rspec-rails); Gemfile differs from HEAD only by the G3 solid_cable removal; `bin/rails test` → 0 runs, 0 assertions, 0 failures | CLAUDE.md, `.claude/rules/testing.md`, and the testing and rails-backend skills still say RSpec (owner to update); `docs/requirements.md` §11 and API spec §12 use RSpec wording |
 | 2026-09-28 | 2 (docs sync: Minitest) | Aligned Markdown with the codebase's Minitest setup: CLAUDE.md (backend tests), `.claude/rules/testing.md` (paths `backend/test/**/*.rb`), testing skill (Minitest layers; MySQL instead of PostgreSQL; BACKEND_PLAN.md instead of PROJECT_DEV_PLAN.md), rails-backend skill, requirements §5 and §11, API spec §12 heading, architecture, database design, ADR 004, and Phases 3–6 of this plan ("specs" → "tests") | grep for RSpec/spec references afterwards (see summary). Completion-log history and superseded PROJECT_DEV_PLAN.md left unchanged on purpose | — |
+| 2026-09-28 | 2 (re-review) | Re-reviewed Phase 2 against the current codebase (Minitest, G3 applied) and docs. Updated current-state rows (Env, Tests, Git, E14). Added findings H1–H8 (API base controller in a full-stack app, `DB_USER`/`DB_USERNAME` mismatch, Solid roles sharing the dev/test database, parallel Minitest databases, `minitest/mock` availability, `db:prepare` not run, uncommitted ADRs and G3, test rate-limit store). Revised 2.1–2.3 tasks | Read-only inspection: controllers, routes, `application.rb`, `filter_parameter_logging.rb`, environment cache stores, `.gitignore`, `.env.example` variable names (values not read), `test_helper.rb`, lockfile `minitest` version, `db/` | Owner: decide H1 and H3; fix H2; commit H7 |
+| 2026-09-28 | 2 (H decisions) | Owner approved H1 (API base controller on `ActionController::Base`, JSON-only, no `allow_browser`) and H3 (development and test use only the `primary` database role). H2 was already fixed by the owner | Read `backend/.env.example`: variable names `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT` match `database.yml`. No file changed except this plan | Apply H3 in `database.yml` and the H1 doc alignment when instructed |
+| 2026-09-28 | 2.2 (H1 docs) | Aligned docs with H1: architecture v2.2 (G1 banner now records the full-stack app with a JSON-only API; code layout adds `base_controller` on `ActionController::Base` and `health_controller` on `ActionController::API`; §5 adds a controller-base bullet, drops "added back to the API-only middleware stack", and the default-deny rule no longer lists `/health` as an opt-out). ADR 004: session decision, default-deny rule, and consequences updated | Documentation only; grep confirms no remaining "API-only middleware" wording | H3 `database.yml` edit still pending instruction |
+| 2026-09-28 | 2.1 | Added root `.gitignore` (`.DS_Store`, `.env`); rewrote root `README.md` (overview, layout, prerequisites, `.env` variables, setup, run, test, docs links, out of scope); replaced the generated `backend/README.md` with a pointer; added a "Current Plan" section to `CLAUDE.md`. Corrected the 2.1 deliverable wording for G8 | `git check-ignore`: `backend/.env`, `backend/config/master.key`, `backend/log/x.log`, `.DS_Store`, `docs/.DS_Store` ignored; README not ignored. `.env.example` names equal `database.yml` `DB_*` names. No `.env` or `master.key` tracked; no hard-coded credential patterns found (`database.yml` `root` fallbacks are inside `ENV.fetch`, G5 kept). All README links resolve. `bundle check` satisfied; `bin/rails test` → 0 runs, 0 failures (Ruby 3.2.0). `db:prepare` not run | Owner: commit; decide when to apply H3 (2.2) |
 
 ## Current progress
 - **Current phase:** Phase 1 — Backend requirements and design — **Done (gate passed 2026-09-28)**
 - **Next phase:** Phase 2 — Repository and Rails foundation. Review findings recorded; tasks 2.1–2.3 proposed.
-- **Current subphases:** 2.1 and 2.2 In Progress (scaffold done by the owner); 2.3 Not Started. Awaiting decisions G1–G8.
+- **Current subphases:** 2.1 Done; 2.2 In Progress (scaffold done by the owner); 2.3 Not Started. H1 and H3 approved, H2 done. Next: apply H3 and the rest of 2.2. H7 commit is an owner action.
 - **Overall status:** Phase 1 complete; Phase 2 in progress
 
 ## Future work

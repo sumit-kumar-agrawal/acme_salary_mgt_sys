@@ -1,3 +1,90 @@
 # acme_salary_mgt_sys
 
-Develop a web-based application that enables ACME's HR Manager to manage salary information for 10,000 employees across multiple countries and understand organizational salary distribution through analytics and reports. The system will replace manual Excel-based salary management.
+A web application for ACME's HR Manager to manage salary information for about 10,000 employees across multiple countries, and to analyse compensation through reports and dashboards. It replaces a manual, Excel-based process.
+
+Salary amounts are **monthly gross base pay**, stored together with their currency. Amounts in different currencies are never summed together. All development and demo data is synthetic.
+
+> **Status:** backend foundation in progress (Phase 2 of [`BACKEND_PLAN.md`](BACKEND_PLAN.md)). The frontend is planned separately.
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `backend/` | Rails 8 application (JSON API under `/api/v1`) |
+| `docs/` | Requirements, architecture, database design, API specification, and ADRs |
+| `BACKEND_PLAN.md` | Phased backend plan, decisions, and progress log (the current plan) |
+| `PROJECT_DEV_PLAN.md` | Earlier full-stack plan; its backend phases are superseded by `BACKEND_PLAN.md` |
+| `CLAUDE.md`, `.claude/` | Project instructions, rules, and skills for Claude Code |
+| `requirements.docx` | Original agreed scope document |
+
+## Prerequisites
+
+| Tool | Version | Notes |
+|---|---|---|
+| Ruby | 3.2.0 (see `backend/.ruby-version`) | Managed with [RVM](https://rvm.io). `rvm install 3.2.0` if needed |
+| Bundler | 2.x | Ships with Ruby |
+| MySQL | 8.0.16 or later (8.4 used in development) | Needed for enforced `CHECK` constraints |
+
+Docker support is planned for a later phase.
+
+## Setup
+
+1. **Install gems**
+
+   ```bash
+   cd backend         # RVM switches to the Ruby in backend/.ruby-version
+   ruby -v            # should print 3.2.0; otherwise run: rvm use 3.2.0
+   bundle install
+   ```
+
+2. **Configure the database connection.** Create `backend/.env`. It is git-ignored, so never commit it. Rails loads it through `dotenv-rails`. `config/database.yml` reads these variables:
+
+   | Variable | Example | Purpose |
+   |---|---|---|
+   | `DB_HOST` | `localhost` | MySQL host |
+   | `DB_PORT` | `3306` | MySQL port |
+   | `DB_NAME` | `salary_management` | Development database name. The test database is always `salary_management_test` |
+   | `DB_USERNAME` | `salary_app` | MySQL user |
+   | `DB_PASSWORD` | *(your password)* | MySQL password |
+
+   A dedicated MySQL user is recommended over `root`. It needs rights on `salary_management` and on `salary_management_test%`: tests run in parallel, and Rails creates one test database per worker.
+
+3. **Create the databases** (the first time only)
+
+   ```bash
+   bin/rails db:prepare
+   ```
+
+   See `BACKEND_PLAN.md` task 2.2 (H3) before the first run: development and test are to use only the primary database.
+
+## Running
+
+```bash
+cd backend
+bin/rails server
+```
+
+The app listens on `http://localhost:3000`. The documented health endpoint `GET /api/v1/health` arrives in task 2.2; until then, Rails' built-in `GET /up` responds.
+
+## Testing and quality
+
+```bash
+cd backend
+bin/rails test                # Minitest suite (runs in parallel)
+bin/rubocop                   # style (rubocop-rails-omakase)
+bin/brakeman --no-pager       # static security scan
+```
+
+The baseline results are recorded in `BACKEND_PLAN.md` once task 2.3 is complete.
+
+## Documentation
+
+- [Requirements](docs/requirements.md): scope, approved decisions, traceability
+- [Architecture](docs/architecture.md): modules, request flows, auth boundary, error contract
+- [Database design](docs/database-design.md): schema, integrity rules, query shapes, seed plan
+- [API specification](docs/api-specification.md): endpoints, payloads, status codes
+- Architecture decision records: [001 monorepo](docs/decisions/001-monorepo.md), [002 currency](docs/decisions/002-currency-handling.md), [003 salary history](docs/decisions/003-salary-history.md), [004 authentication](docs/decisions/004-authentication.md), [005 versions and libraries](docs/decisions/005-runtime-versions-and-libraries.md)
+
+## Out of scope
+
+Payroll processing, tax and statutory calculations, salary disbursement, banking/HRMS integrations, advanced role-based access and approval workflows, currency conversion, and AI/LLM features. See `docs/requirements.md` §6.

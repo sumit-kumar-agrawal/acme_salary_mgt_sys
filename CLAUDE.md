@@ -50,6 +50,10 @@ Do not implement excluded features unless requirements are explicitly changed an
 @.claude/rules/security.md
 @.claude/rules/testing.md
 
+## Current Plan
+
+Backend work follows BACKEND_PLAN.md (phases, decisions, status, and completion log). Its backend phases supersede those in PROJECT_DEV_PLAN.md.
+
 ## Workflow
 
 1. Read docs/requirements.md before implementation.
