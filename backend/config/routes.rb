@@ -9,6 +9,23 @@ Rails.application.routes.draw do
     namespace :v1 do
       # Public health check including a database probe (docs/api-specification.md §3).
       get "health", to: "health#show"
+
+      # Sign in / state / sign out for the single HR user (docs/api-specification.md §4).
+      resource :session, only: %i[show create destroy]
+
+      # Read-only reference data for filters and forms (docs/api-specification.md §5).
+      resources :countries, only: :index
+      resources :departments, only: :index
+      resources :currencies, only: :index
+
+      # No destroy: employees are terminated, never deleted (docs/api-specification.md §6, I12).
+      resources :employees, only: %i[index show create update] do
+        # History, salary change (POST), and correction (PATCH); no destroy (docs/api-specification.md §7, I12).
+        resources :salary_records, only: %i[index show create update]
+      end
+
+      # Must stay last: any other /api/v1 path returns a JSON 404, never HTML (BACKEND_PLAN.md L10).
+      match "(*path)", to: "not_found#show", via: :all
     end
   end
 

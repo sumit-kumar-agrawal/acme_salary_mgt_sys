@@ -46,6 +46,8 @@ Docker support is planned for a later phase.
    | `DB_NAME` | `salary_management` | Development database name. The test database is always `salary_management_test` |
    | `DB_USERNAME` | `salary_app` | MySQL user |
    | `DB_PASSWORD` | *(your password)* | MySQL password |
+   | `HR_USER_EMAIL` | `hr@example.test` | The HR Manager login, used by `hr:create_user` |
+   | `HR_USER_PASSWORD` | *(at least 12 characters)* | Its password, used by `hr:create_user` only |
 
    A dedicated MySQL user is recommended over `root`. It needs rights on `salary_management` and `salary_management_test`.
 
@@ -56,6 +58,15 @@ Docker support is planned for a later phase.
    ```
 
    See `BACKEND_PLAN.md` task 2.2 (H3) before the first run: development and test are to use only the primary database.
+
+4. **Create the HR login** (there is no sign-up)
+
+   ```bash
+   bin/rails hr:create_user                    # reads HR_USER_EMAIL and HR_USER_PASSWORD from backend/.env
+   RESET_PASSWORD=1 bin/rails hr:create_user   # change the password of the existing user
+   ```
+
+   The API uses a session cookie with CSRF protection: call `GET /api/v1/session` for a `csrf_token`, then `POST /api/v1/session` with `{"email", "password"}` and an `X-CSRF-Token` header. Sessions end after 30 minutes idle or 8 hours. Login is limited to 5 attempts per minute per IP.
 
 ## Sample data
 

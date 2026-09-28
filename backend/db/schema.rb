@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_28_100005) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_28_100006) do
   create_table "countries", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
     t.string "code", limit: 2, null: false
     t.string "name", limit: 100, null: false
@@ -69,6 +69,14 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_28_100005) do
     t.index ["employee_id", "open_flag"], name: "index_salary_records_on_employee_id_and_open_flag", unique: true
     t.check_constraint "(`effective_to` is null) or (`effective_to` >= `effective_from`)", name: "salary_records_period_order"
     t.check_constraint "`amount` > 0", name: "salary_records_amount_positive"
+  end
+
+  create_table "users", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
+    t.string "email", null: false
+    t.string "password_digest", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["email"], name: "index_users_on_email", unique: true
   end
 
   add_foreign_key "employees", "countries"

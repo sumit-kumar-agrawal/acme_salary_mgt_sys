@@ -39,6 +39,8 @@ class Employees::CreateServiceTest < ActiveSupport::TestCase
         assert_not employee.persisted?
         assert employee.errors.of_kind?(:"initial_salary.amount", :greater_than)
         assert employee.errors.of_kind?(:"initial_salary.effective_from", :before_hire_date)
+        # Messages must be renderable (API error details): regression for 4.3.
+        assert_equal [ "must be greater than 0" ], employee.errors.to_hash[:"initial_salary.amount"]
       end
     end
   end

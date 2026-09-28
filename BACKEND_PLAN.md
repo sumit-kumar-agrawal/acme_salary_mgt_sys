@@ -451,32 +451,138 @@ Inputs: `docs/database-design.md` v2.0 (with later updates), ADRs 002, 003, and 
 ## Phase 4 — Employee and salary APIs
 **Goal:** Deliver secure, documented REST APIs for core salary management.
 
-### 4.1 Authentication and authorization foundation
-**Prompt:** `Implement proportionate secure authentication for the HR Manager per the approved auth decision (D16) and server-side protection applied by default to every API controller. Keep secrets in environment configuration. Add integration tests for login/logout, invalid credentials, rate limiting, and unauthenticated access. Do not build advanced RBAC or approval workflows.`
-**Deliverables:** `users` migration and model (docs/database-design.md §3.1), `hr:create_user` rake task, session endpoints (API spec §4), default-deny base controller, and access-control tests.
-**Acceptance:** Every non-public endpoint rejects unauthenticated requests by default; credentials come only from environment configuration; no salary data is exposed on auth failure.
-**Status:** Not Started
-**Note:** Moved ahead of the domain endpoints (previously 4.4) so that no employee or salary endpoint ever exists unprotected (finding C7).
+### Phase 4 review findings (2026-09-28)
 
-### 4.2 API foundation and response conventions
-**Prompt:** `Implement shared API conventions based on docs/api-specification.md: JSON response shape, error handling, parameter validation, and appropriate HTTP status codes. Add integration tests. Avoid unnecessary abstraction.`
-**Deliverables:** API response/error conventions and integration tests.
-**Acceptance:** Success and error responses are consistent and tested.
-**Status:** Not Started
+Inputs: API spec v2.0 (§1–§7, §10–§12), architecture v2.2 (§3, §5–§7), ADR 004, database design §5–§7 and §12, requirements §10–§11, and the codebase after Phase 3. Observed:
+- Full-stack Rails 8.0.5.1 app. `ApplicationController` has `allow_browser`. No `session_store` or `wrap_parameters` initializers, so Rails defaults apply: cookie store and automatic JSON parameter wrapping.
+- The test environment has `allow_forgery_protection = false` and `cache_store = :null_store`.
+- `bcrypt` is **not installed** (only a commented Gemfile line). There is no `users` table, and `.env.example` has no `HR_USER_*`.
+- Pagy 43.4.4 uses `page` and `limit` parameters, silently caps limits at `client_max_limit`, and by default does **not** raise for a page past the end.
+- The Phase 3 services (`Salaries::ChangeService`, `Salaries::CorrectionService`, `Employees::CreateService`) return records with errors, and `errors.of_kind?(:base, :not_editable)` marks a historical-record rejection.
+- The development database holds 10,000 demo employees.
+
+#### A. Missing decisions
+
+**Owner decisions (2026-09-28):** L1–L18 approved, including the `bcrypt` install (L3).
+
+| ID | Decision | Recommendation | Needed by |
+|---|---|---|---|
+| L1 | **Subphase order.** 4.2 (conventions) builds the error envelope and base controller that 4.1 (auth) needs for its `401`/`422`/`429` responses. | Re-scope, keeping the numbers: **4.1 = API base controller, error envelope, and authentication**, tested through the session endpoints; **4.2 = list conventions (pagination, query-parameter validation, formatting) plus the read-only reference-data endpoints** as their first protected consumers; 4.3 employees; 4.4 salaries. No domain endpoint exists before auth (C7 still holds). | 4.1 |
+| L2 | **Rails 8 `bin/rails generate authentication` vs a hand-rolled login.** The generator adds a DB `sessions` table, an `email_address` column, a password-reset mailer, and HTML views, which is more than ADR 004 allows (no reset flows). | Hand-roll per ADR 004: `User` with `has_secure_password`, a cookie session, and an `Authentication` concern. | 4.1 |
+| L3 | **Installing `bcrypt`.** | Uncomment `gem "bcrypt", "~> 3.1.7"` and run `bundle install` (owner approval, as for 3.1). | 4.1 |
+| L4 | **HR user provisioning.** | `bin/rails hr:create_user` reads `HR_USER_EMAIL` and `HR_USER_PASSWORD` (minimum 12 characters). It refuses if the user already exists unless `RESET_PASSWORD=1`, which updates the password. Add both variable names to `.env.example`. The owner runs it with real credentials. | 4.1 |
+| L5 | **Login check.** | `User.authenticate_by(email:, password:)` (timing-safe, Rails 7.1+); email normalised to lower case; the same `401 invalid_credentials` for an unknown email or a wrong password. | 4.1 |
+| L6 | **Session cookie settings.** | Explicit `config/initializers/session_store.rb`: cookie store, key `_acme_salary_session`, `httponly`, `same_site: :lax`, `secure` in production. The `Authentication` concern enforces a 30-minute idle expiry (`session[:last_seen_at]`) and an 8-hour absolute expiry (`session[:signed_in_at]`); `reset_session` on login and logout. | 4.1 |
+| L7 | **Testing CSRF.** The test environment disables forgery protection, so default tests never exercise CSRF. | Keep the default off, and add dedicated tests that temporarily set `ActionController::Base.allow_forgery_protection = true` for: missing token → `422 invalid_csrf_token`; token from `GET /session` accepted. | 4.1 |
+| L8 | **Rate-limit store in tests (G9).** `:null_store` means `rate_limit` never triggers. | `config.cache_store = :memory_store` in `test.rb`, plus `Rails.cache.clear` in the rate-limit test setup. `rate_limit to: 5, within: 1.minute, only: :create` on `SessionsController`. | 4.1 |
+| L9 | **Automatic JSON parameter wrapping.** Rails wraps unwrapped JSON bodies under the controller key, so the spec's "missing wrapper key → `400`" would never happen. | `wrap_parameters false` in `Api::V1::BaseController`; `params.require(:employee)` / `:salary_record` raises `ParameterMissing` → `400 bad_request`. | 4.1 |
+| L10 | **Unknown API routes.** In a full-stack app, unmatched paths render HTML (a debug page in development, `public/404.html` in production). | A catch-all `match "*path", via: :all` inside the `api/v1` namespace (declared last) → `404 not_found` JSON. | 4.1 |
+| L11 | **`500` handling.** Rescuing `StandardError` everywhere hides real failures in tests. | `rescue_from StandardError` → `500 internal_error`, logging the class and backtrace only. Active outside the test environment (`config.x.api_rescue_unexpected_errors`), with one test that enables it and asserts the envelope. | 4.1 |
+| L12 | **Query-parameter validation (API §2.3, §2.4, §6.1).** | A small `QueryParams` concern that validates `page` ≥ 1, `per_page` 1–100, the `sort` allowlist, enum values, existing filter IDs, `q` ≤ 100 characters, and ISO dates. It raises `Api::BadRequest` with `details` → `400 bad_request`, validating **before** Pagy so oversized values are rejected rather than capped. | 4.2 |
+| L13 | **Pagy 43 integration.** | `include Pagy::Method`; `pagy(:offset, scope, limit: per_page, page: page)`. Build `meta` ourselves (`page`, `per_page`, `total_count`, `total_pages` = `ceil(count / per_page)`, which is 0 when there are no rows). A page past the end returns `data: []` (Pagy's default, verified in its source). | 4.2 |
+| L14 | **Money and time formatting.** | Shared jbuilder helper: amounts via `ActiveSupport::NumberHelper.number_to_rounded(amount, precision: minor_units)` (exact BigDecimal, e.g. `"85000.00"`, `"250000"`, `"1500.125"`). Timestamps: `ActiveSupport::JSON::Encoding.time_precision = 0` so they match the spec (`2026-09-28T10:15:00Z`). Dates as `YYYY-MM-DD`. | 4.2 |
+| L15 | **Where list logic lives.** | `EmployeeSearchQuery` (filters, `q` via `sanitize_sql_like`, allowlisted sort with `id` tie-break, `includes(:country, :department)`). A no-N+1 test uses `assert_queries_count` (Rails 7.2+). | 4.3 |
+| L16 | **Service errors → HTTP.** | `persisted?`/`errors.empty?` → `201`/`200`; `errors.of_kind?(:base, :not_editable)` → `422 salary_record_not_editable`; any other errors → `422 validation_failed` with `details` (attribute → messages, including `initial_salary.*`). Salary records are looked up via `@employee.salary_records.find`, so a record of another employee returns `404`. | 4.3 / 4.4 |
+| L17 | **Checking log redaction (NFR security).** | An integration test captures the Rails log for a salary `POST`/`PATCH` and a login, and asserts that `amount`, `first_name`, `last_name`, `email`, and `password` values are absent and `[FILTERED]` is present. | 4.4 |
+| L18 | **I12 "no destroy routes".** | Routing tests: `DELETE /api/v1/employees/:id` and `DELETE …/salary_records/:id` return `404` JSON (via L10). Closes the gap in database design §12. | 4.3 / 4.4 |
+
+#### B. Assumptions
+- One HR user; the future frontend is same-site (ADR 004). No CORS, JWT, or password-reset flow.
+- Responses follow API spec v2.0 exactly; anything that has to deviate (e.g. time precision) is updated in the spec in the same subphase.
+- `status`, `editable`, and `current_salary` are computed against `Date.current` (UTC); tests use `travel_to`.
+- The salary history list stays unpaginated (API §7.2); reference lists are unpaginated (API §5).
+- Analytics and reports (Phase 5) are out of scope; Phase 4 only adds the employee, reference, salary, session, and health endpoints (API §11).
+
+#### C. Dependencies
+
+| Dependency | Blocks | Owner |
+|---|---|---|
+| L1–L11 approval; `bcrypt` install (L3) | 4.1 | Project owner |
+| `HR_USER_EMAIL` / `HR_USER_PASSWORD` in `backend/.env` and running `hr:create_user` (L4) | Manual login in development (tests use factories) | Project owner |
+| 4.1 base controller, errors, and auth | 4.2–4.4 | — |
+| 4.2 pagination, parameter validation, and formatting | 4.3, 4.4, Phase 5 | — |
+| Phase 3 models and services | 4.3, 4.4 | Done |
+
+#### D. Risks
+
+| Risk | Likelihood / impact | Mitigation |
+|---|---|---|
+| CSRF gaps unnoticed because tests disable forgery protection | Medium / High | L7 dedicated tests |
+| Contract drift: auto-wrapped params, HTML error pages, Pagy silently capping `per_page` | High / Medium | L9, L10, L12 |
+| Rate limit untestable or ineffective | High / Medium | L8 memory store in tests; production uses Solid Cache |
+| Session cookie misconfigured (not HttpOnly, wrong SameSite, not Secure in production) | Low / High | L6 explicit initializer plus a test on `Set-Cookie` flags |
+| Salary or personal data in logs or error bodies | Medium / High | Existing parameter filters; L17 log test; errors never echo values |
+| N+1 queries on the 10k-employee list | Medium / Medium | L15 `includes` plus a query-count test |
+| Timing leak on login | Low / Medium | L5 `authenticate_by` |
+| Malformed JSON body producing `500` | Medium / Low | Rescue `ActionDispatch::Http::Parameters::ParseError` → `400` |
+| Date-dependent flakiness in status and `current_salary` | Medium / Low | `travel_to` in all such tests |
+| `bcrypt` native build fails | Low / Medium | Build tools are already present for `mysql2`; the owner can run `bundle install` |
+
+### 4.1 API base controller, error envelope, and authentication
+**Prompt:** `Per L1–L11 and ADR 004: add Api::V1::BaseController (< ActionController::Base, JSON-only, wrap_parameters false, forgery protection, default-deny auth), the ErrorHandling concern (API §10 envelope), an /api/v1 catch-all 404, the users table and User model, the Authentication concern (session, idle and absolute expiry), SessionsController (GET/POST/DELETE /session, CSRF token, rate limit), and the hr:create_user task. No domain endpoints.`
+**Tasks:**
+1. ~~Owner: approve L1–L11; allow the `bcrypt` install (L3).~~ Approved 2026-09-28.
+2. ~~`users` migration (database design §3.1) and `User` (`has_secure_password`, email normalised and unique, password ≥ 12 characters); `lib/tasks/hr.rake` (`hr:create_user`, L4); `.env.example` gains `HR_USER_EMAIL` and `HR_USER_PASSWORD` names.~~ Done 2026-09-28.
+3. ~~`config/initializers/session_store.rb` (L6); `ActiveSupport::JSON::Encoding.time_precision = 0` (L14); `test.rb` memory cache store (L8).~~ Done 2026-09-28.
+4. ~~`Api::V1::BaseController` with the `ErrorHandling` concern (400/401/404/422/429/500 per API §10, plus `ParseError` → 400, L11) and the `Authentication` concern (`require_login`, `current_user`, expiry).~~ Done 2026-09-28.
+5. ~~`Api::V1::SessionsController` (API §4): `GET` returns state and CSRF token; `POST` uses `authenticate_by`, `reset_session`, and `rate_limit`; `DELETE` → 204.~~ Done 2026-09-28.
+6. ~~Routes: session routes plus the catch-all (L10).~~ Done 2026-09-28.
+7. ~~Tests: login success and failure (generic message); logout; `401` when unauthenticated; idle and absolute expiry (`travel_to`); rate limit → `429`; CSRF (L7); `Set-Cookie` flags; catch-all JSON 404; malformed JSON → 400; `500` envelope (L11); the `hr:create_user` task; `User` model rules.~~ Done 2026-09-28.
+
+**Deliverables:** Base controller, error and auth concerns, users table and model, session endpoints, HR task, and tests.
+**Acceptance:** All auth and error-envelope tests pass; no path under `/api/v1` returns HTML; RuboCop and Brakeman clean.
+**Status:** Done (2026-09-28). `bin/rails test` 115 runs, 317 assertions, 0 failures (twice); RuboCop 76 files clean; Brakeman 0 warnings (2 ignored). Live check on a spare port: `GET /session` 200 JSON; unknown path 404 JSON; `DELETE /session` unauthenticated 401; `POST` without CSRF token 422 `invalid_csrf_token`; health 200; `Set-Cookie: _acme_salary_session…; httponly; samesite=lax`.
+Notes: unauthenticated state-changing requests get `401` before the CSRF check (the login check runs first), so no CSRF detail leaks to anonymous callers. Rails 8.0 prints a harmless `STATS_DIRECTORIES` warning when tests load rake tasks.
+
+### 4.2 List conventions and reference-data endpoints
+**Prompt:** `Per L12–L14: add the QueryParams and Pagination concerns (Pagy 43, validated before paging), shared jbuilder helpers for money, dates, errors, and pagination meta, and the protected read-only GET /countries, /departments, /currencies endpoints (API §5).`
+**Tasks:**
+1. ~~`QueryParams` concern and `Api::BadRequest` (L12); `Pagination` concern using `pagy(:offset, …)` with our own `meta` (L13).~~ Done 2026-09-28.
+2. ~~Jbuilder helpers and partials: money (L14), pagination meta, error envelope.~~ Done 2026-09-28.
+3. ~~`CountriesController`, `DepartmentsController`, `CurrenciesController` (index only; ordered per API §5) and their views.~~ Done 2026-09-28.
+4. ~~Tests: `401` without login; ordering and shapes; unit tests for `QueryParams` edge cases (0, 101, non-numeric, unknown sort, unknown ID, long `q`, bad date) and pagination meta (empty set, last page, past the end).~~ Done 2026-09-28.
+
+**Deliverables:** Shared conventions and 3 reference endpoints with tests.
+**Acceptance:** Reference endpoints match API §5; every invalid list parameter yields `400` with `details`; RuboCop and Brakeman clean.
+**Status:** Done (2026-09-28). `bin/rails test` 139 runs, 431 assertions, 0 failures on 6 random seeds (including one that failed earlier); RuboCop 91 files clean; Brakeman 0 warnings. Live on a spare port: the three reference endpoints return `401` JSON when signed out; `POST /countries` returns `404` JSON.
+Notes:
+- **`with_routing` is not used in tests.** In Rails 8.0 it broke route helpers for integration tests that ran afterwards, so some random seeds failed. Pagination is unit-tested through a host object (Pagy accepts a request hash), and the 4.1 `500` test now makes `GET /countries` fail temporarily instead.
+- `ParameterMissing` now returns `details` naming the missing key (e.g. `{"employee": ["is required"]}`), used from 4.3.
+- `QueryParams` raises on the first invalid parameter, so `details` names one parameter.
 
 ### 4.3 Employee endpoints
-**Prompt:** `Implement employee endpoints (docs/api-specification.md §6), including list/detail, create with optional initial_salary in one transaction, and update, plus the read-only reference-data endpoints (§5). Support search, filters, sorting, and pagination. Prevent unnecessary sensitive-field exposure, avoid N+1 queries, and add integration tests.`
-**Deliverables:** Employee and reference-data API endpoints and integration tests.
-**Acceptance:** Contract, validation, filtering, pagination, and authorization behavior are tested.
-**Status:** Not Started
+**Prompt:** `Implement GET/POST /employees and GET/PATCH /employees/:id per API §6 using EmployeeSearchQuery (L15), Employees::CreateService, and the 4.2 conventions. List without salary or email (D18); detail with current_salary and email; no DELETE route.`
+**Tasks:**
+1. ~~`EmployeeSearchQuery`: `q`, `country_id`, `department_id`, `employment_status`, and the sort allowlist (`employee_number` default, `last_name`, `hired_on`, `created_at`, `-` for descending, `id` tie-break); `includes`.~~ Done 2026-09-28.
+2. ~~`EmployeesController` (`index`, `show`, `create` via `CreateService`, `update` with strong params; `hired_on` I13 via the model) and jbuilder views (summary and detail).~~ Done 2026-09-28.
+3. ~~Tests: contract shapes; the list has no `email` or salary fields; filter combinations; `q` search (case- and accent-insensitive, wildcard escaping); every sort field; pagination; `per_page` cap; `400` cases; create with and without `initial_salary`, prefixed errors, and nothing saved on failure; update including the I13 error; `404`; `401`; no N+1 (`assert_queries_count`); `DELETE` → 404 (L18).~~ Done 2026-09-28.
+
+**Deliverables:** Employee endpoints, query object, views, and tests.
+**Acceptance:** API §6 contract, validation, filtering, pagination, and authorization behaviour tested; no N+1; RuboCop and Brakeman clean.
+**Status:** Done (2026-09-28). `bin/rails test` 164 runs, 560 assertions, 0 failures on 5 seeds; RuboCop 97 files clean; Brakeman 0 warnings. Live, signed out: `GET /employees` and `/employees/1` return `401`; `DELETE /employees/1` returns `404`. Query timing on the 10k demo data: default page 12 ms, `q=smith` 32 ms, country and status 12 ms, sort by `-hired_on` 9 ms. No N+1: the list's query count is identical for 2 and 12 employees.
+Notes:
+- **Bug fixed in 3.2 code:** `Employees::CreateService` re-added salary errors with `errors.add(..., message:)`. Rendering those messages crashed (`undefined method 'initial_salary.currency'`). It now uses `errors.import`, and a regression assertion was added to `create_service_test.rb`.
+- **Contract clarifications** (recorded in API spec §6.3): `details` keys use request field names (`country_id`, `department_id`, `initial_salary.currency_code`); an invalid `hired_on` returns `422` (new `Employee` validation); a missing `employee` key returns `400` with `details`.
+- `current_salary` is loaded in the controller (thin views) and uses `Date.current` (UTC).
 
 ### 4.4 Salary and history endpoints
-**Prompt:** `Implement salary record and salary-history endpoints per the API contract: create (salary change that closes the prior period), list, show, and PATCH correction of current or scheduled (future-dated) records only (D4 + O1). Validate amount, currency, and effective dates; preserve historical records; use transactions where needed. Add integration tests for success and failure cases. Do not implement payroll calculations or disbursement.`
-**Deliverables:** Salary/history endpoints and integration tests.
-**Acceptance:** Current and historical records behave as documented; a salary change preserves the prior record; PATCH corrects current and scheduled records and returns `422 salary_record_not_editable` for historical ones; invalid changes are rejected.
-**Status:** Not Started
+**Prompt:** `Implement GET/POST /employees/:employee_id/salary_records and GET/PATCH …/:id per API §7 using Salaries::ChangeService and Salaries::CorrectionService (L16). Status, editable, and period in every record; no DELETE route; verify log redaction (L17).`
+**Tasks:**
+1. ~~`SalaryRecordsController` (`index` newest first, unpaginated; `show`; `create` via `ChangeService`; `update` via `CorrectionService`), scoped to the employee, and jbuilder views (API §7.1).~~ Done 2026-09-29.
+2. ~~Error mapping: `not_editable` → `422 salary_record_not_editable`; date fields in `PATCH` → `422 validation_failed`; other errors → `422` with `details`.~~ Done 2026-09-29.
+3. ~~Tests (with `travel_to`): history order, status, and `editable`; a change closes the prior period (API §7.3); backdated, same-date, and pre-hire changes → 422; decimal places per currency; correcting current and scheduled records → 200; historical → `422 salary_record_not_editable`; record of another employee → 404; `401`; `DELETE` → 404 (L18); log redaction (L17).~~ Done 2026-09-29.
+4. ~~Update database design §12 (I12 no destroy routes: closed) and API spec if any detail changed.~~ Done 2026-09-29.
 
-**Phase gate:** Employee and salary APIs satisfy the contract and pass relevant integration tests.
+**Deliverables:** Salary endpoints, views, and tests.
+**Acceptance:** Current and historical records behave as documented; a change preserves the prior record; `PATCH` corrects current and scheduled records and returns `422 salary_record_not_editable` for historical ones; invalid changes are rejected; logs contain no salary values; RuboCop and Brakeman clean.
+**Status:** Done (2026-09-29). `bin/rails test` 183 runs, 650 assertions, 0 failures on 5 seeds; RuboCop 102 files clean; Brakeman 0 warnings. Live, signed out: `GET` and `PATCH` salary records return `401`; `DELETE` returns `404`.
+Notes:
+- **Log redaction (L17) finding:** request parameters are always `[FILTERED]`, but at `debug` level mysql2 writes SQL with inline values (`INSERT … VALUES (…, 123456.78, …)`, `SET first_name = 'Zenobia'`), because prepared statements are off. The test therefore asserts the production policy (architecture §7): logging at `info` (production default `RAILS_LOG_LEVEL=info`) contains no amounts, names, or emails, and `production.rb` defaults to `info`. **Follow-up (owner decision):** keep `RAILS_LOG_LEVEL` at `info` in production; optionally enable `prepared_statements: true` so debug SQL is redacted too.
+- `POST` ignores `employee_id` and `effective_to` in the body; `PATCH` passes date fields through only so they are rejected as `cannot be changed`.
+
+**Phase 4 gate: passed on 2026-09-29.** Session, reference, employee, and salary endpoints satisfy API spec §4–§7 and §10; all integration tests pass; no `/api/v1` path renders HTML (catch-all tests); I12 fully verified.
+
+**Phase gate:** Session, reference, employee, and salary endpoints satisfy API spec §4–§7 and §10, all integration tests pass, no `/api/v1` path renders HTML, and I12 is fully verified.
 
 ---
 
@@ -595,13 +701,20 @@ Inputs: `docs/database-design.md` v2.0 (with later updates), ADRs 002, 003, and 
 | 2026-09-28 | 3.2 | Migration `salary_records` (DECIMAL(18,4), stored virtual `open_flag`, unique `(employee_id, effective_from)` and `(employee_id, open_flag)`, FKs to employees and `currencies.code`, CHECKs amount > 0 and period order). `SalaryRecord` (I4–I7, I10, I13 validations, raw-input scale check J9, `attr_readonly` J8, `in_effect_on`, `status_on`, `editable?`). `Employee` `has_many :salary_records` (restrict), `current_salary`, I13 employee side (J10); `Currency` `has_many :salary_records` (restrict). Services: `Salaries::ChangeService`, `Salaries::CorrectionService`, `Employees::CreateService` (savepoint transactions, employee row lock). Salary factory; 38 new model and service tests | `db:migrate`; `SHOW INDEX` lists exactly PK plus the 3 planned indexes; `db:test:prepare`; serial `bin/rails test` ×3 seeds: 75 runs, 190 assertions, 0 failures; RuboCop 51 files clean; Brakeman 0 warnings; `db:migrate:redo STEP=1` leaves schema.rb identical. **Parallel `bin/rails test` hangs** (Rails 8.0.5.1 vs minitest 6.0.6) | Owner: decide K1; then re-run `bin/rails test` and close 3.2 |
 | 2026-09-28 | 3.2 (K1, close) | Owner chose K1 option 3: `parallelize(workers: 1)` in `test/test_helper.rb`. README testing and setup notes updated (no per-worker databases). 3.2 marked Done | Plain `bin/rails test`: 75 runs, 190 assertions, 0 failures in about 1 s; RuboCop on `test_helper.rb` clean | Revisit parallel tests after a Rails 8.1 upgrade |
 | 2026-09-28 | 3.3 | `lib/reference_data.rb` (single source for design §8; idempotent `seed!`); `db/seeds.rb` calls it; `lib/demo/seeder.rb` (deterministic 10k generator, seed 42, fixed as-of 2026-09-28, `insert_all!` batches, one transaction); `lib/demo/integrity_check.rb` (6 SQL checks and a summary); `lib/tasks/demo.rake` (`demo:seed`, `demo:reset` development only; `demo:verify` read-only); 14 tests in `test/lib/`. Database design §9 rewritten with actual counts; new §12 integrity checklist I1–I13; README "Sample data" section. Phase 3 gate passed | Dev DB: `db:seed` ×2 identical checksums; `demo:seed` 10,000 employees, 16,826 records, 1.5 s, 0 violations; refuses when employees exist; `demo:reset` same fingerprint (432578cbe2b388cf); `demo:verify` clean; production refusal for seed and reset. `bin/rails test` 89 runs, 224 assertions, 0 failures; RuboCop 59 files clean; Brakeman 0 warnings | I12 "no destroy routes" to verify in Phase 4. The development DB now holds demo data |
+| 2026-09-28 | 4 (review) | Reviewed Phase 4 against API spec v2.0, architecture v2.2, ADR 004, database design, requirements, and the Phase 3 codebase. Recorded decisions L1–L18, assumptions, dependencies, and risks. Re-scoped the subphases (L1): 4.1 base controller, errors, and auth; 4.2 list conventions and reference endpoints; 4.3 employees; 4.4 salaries | Read-only: no session_store or wrap_parameters initializers; test env disables forgery protection and uses null_store; bcrypt not installed; no users table; Pagy 43.4.4 does not raise past the last page (source checked) | Owner: approve L1–L18 and the bcrypt install (L3); set `HR_USER_*` in `.env` when 4.1 lands |
+| 2026-09-28 | 4 (L decisions) | Owner approved L1–L18, including the subphase re-scope (L1), a hand-rolled login (L2), and the `bcrypt` install (L3) | Plan update only | Owner: set `HR_USER_EMAIL` / `HR_USER_PASSWORD` in `backend/.env` before manual login |
+| 2026-09-28 | 4.1 | `bcrypt` 3.1.22 installed (L3). `users` migration and `User` (normalised unique email, `has_secure_password`, ≥ 12 characters); `hr:create_user` task (L4). Initializers: `session_store.rb` (L6), `json_encoding.rb` (time precision 0, L14); test env memory cache (L8); `config.x.api_rescue_unexpected_errors` (L11). `Api::ErrorHandling` and `Api::Authentication` concerns; `Api::V1::BaseController` (< ActionController::Base, JSON-only, `wrap_parameters false`, forgery protection); `SessionsController` (`authenticate_by`, `reset_session`, `rate_limit` 5/min); `NotFoundController` catch-all (L10); shared jbuilder error template. 26 new tests (User, sessions incl. expiry, rate limit, cookie flags, log redaction, CSRF; errors incl. catch-all, malformed JSON, 500; HR task). README (HR login, env vars), `.env.example`, ADR 005 updated | `bundle install` added only bcrypt; `db:migrate` and `db:test:prepare`; `bin/rails test` 115 runs, 317 assertions, 0 failures (×2); RuboCop 76 files clean; Brakeman 0 warnings; live smoke on :3104 as recorded under 4.1 | Owner: add `HR_USER_EMAIL` / `HR_USER_PASSWORD` to `backend/.env`, run `bin/rails hr:create_user`, restart the dev server (new initializers) |
+| 2026-09-28 | 4.2 | `Api::BadRequest`; `Api::QueryParams` (page, per_page 1–100, sort allowlist, enum, existing IDs, string length, ISO dates, single values; L12); `Api::Pagination` (Pagy 43 `pagy(:offset, …)` with validated limit and page, own meta with `total_pages` = ceil, L13), included in `BaseController`; `_pagination_meta` partial; `Api::FormattingHelper#money` (BigDecimal half-up, L14); `ErrorHandling` maps `BadRequest` and `ParameterMissing` to `400` with `details`. `GET /countries` (by name), `/departments` (by name), `/currencies` (by code), sign-in required. 24 new tests (QueryParams, Pagination and meta partial, money, reference endpoints); 4.1 `500` tests rewritten without `with_routing` | `bin/rails test` ×6 seeds: 139 runs, 431 assertions, 0 failures; RuboCop 91 files clean; Brakeman 0 warnings; live smoke on :3105 (401 ×3, 404 on `POST`) | Pagination's first real consumer is the employee list (4.3) |
+| 2026-09-28 | 4.3 | `EmployeeSearchQuery` (filters, escaped contains `q`, allowlisted sort with `id` tie-break, `includes`). `EmployeesController` (`index` paginated, `show`, `create` via `CreateService`, `update`; `details` keys renamed to request fields); jbuilder summary and detail views (no email or salary in the list; `current_salary` with `money()`); `resources :employees` without destroy. `Employee` validates an unparseable `hired_on`. Fixed `CreateService` error import (see 4.3 notes). 25 integration tests. API spec §6.3 and database design §12 (I12) updated | `bin/rails test` ×5 seeds: 164 runs, 560 assertions, 0 failures; RuboCop 97 files clean; Brakeman 0 warnings; live smoke on :3106; 10k-row query timings 9–32 ms | I12 salary-record route to verify in 4.4 |
+| 2026-09-29 | 4.4 | `SalaryRecordsController` nested under employees (`index` newest first, `show`, `create` via `ChangeService`, `update` via `CorrectionService`; scoped lookups; L16 error mapping incl. `salary_record_not_editable`); `_salary_record` partial (money, status, editable); routes without destroy. 19 integration tests (auth, no DELETE, unknown employee, history order and status, change closing periods, scheduled, 422 cases, currency scale, wrapper, ignored fields, corrections, historical 422, immutable dates, cross-employee 404, log redaction at info, production log level). Database design §12 I12 closed; architecture §7 log note. Phase 4 gate passed | `bin/rails test` ×5 seeds: 183 runs, 650 assertions, 0 failures; RuboCop 102 files clean; Brakeman 0 warnings; live smoke on :3107 (401, 401, 404) | Owner: decide the log follow-up (keep `RAILS_LOG_LEVEL=info`; optionally `prepared_statements: true`) |
 
 ## Current progress
 - **Phase 1** — Backend requirements and design — **Done (gate passed 2026-09-28)**
 - **Phase 2** — Repository and Rails foundation — **Done (gate passed 2026-09-28)**. 2.1, 2.2, 2.3 Done. Carried-over follow-ups: README health line; `db:prepare` (owner).
 - **Phase 3** — Domain models and persistence — **Done (gate passed 2026-09-28)**. 3.1, 3.2, 3.3 Done.
-- **Next subphase:** 4.1 — Authentication and authorization foundation (Not Started; Phase 4 not yet reviewed)
-- **Overall status:** Phases 1–3 complete
+- **Phase 4** — Employee and salary APIs — **Done (gate passed 2026-09-29)**. 4.1–4.4 Done.
+- **Next:** Phase 5 — Compensation analytics and report APIs (not yet reviewed)
+- **Overall status:** Phases 1–4 complete
 
 ## Future work
 Frontend phases will be added after the backend/API scope and implementation are complete or stable.

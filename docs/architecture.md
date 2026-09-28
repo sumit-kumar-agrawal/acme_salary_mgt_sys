@@ -172,7 +172,7 @@ Every error uses one envelope, rendered by the `ErrorHandling` concern:
 ## 7. Logging and data redaction
 
 - `filter_parameters` adds `password`, `amount`, `salary`, `email`, `first_name`, `last_name`, and `csrf_token` on top of the Rails defaults. The same list drives `ActiveRecord` `filter_attributes`, so `inspect` output in logs and consoles is redacted too.
-- Production log level is `info`, so SQL statements and their bound values are not logged. Development may log SQL with synthetic data only.
+- Production log level is `info` (`RAILS_LOG_LEVEL` defaults to `info` in `production.rb`), so SQL statements are not logged. Development may log SQL with synthetic data only. **Verified in 4.4:** at `info`, request parameters are `[FILTERED]` and no amounts or names appear. At `debug`, mysql2 writes values inline in SQL (prepared statements are off), so `filter_attributes` cannot redact them. **Never set `RAILS_LOG_LEVEL=debug` in production.** Enabling `prepared_statements: true` would let Rails redact SQL binds too (open option, not adopted).
 - Exceptions are logged with class, message, and request id, never with record attributes. Services never log salary values.
 - The CSV export sets `Cache-Control: no-store`. The app never writes export files to disk.
 

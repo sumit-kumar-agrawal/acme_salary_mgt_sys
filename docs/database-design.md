@@ -346,7 +346,7 @@ Each rule, where it is enforced, and the test that proves it. The SQL checks in 
 | I9 one open record | Generated `open_flag` + UNIQUE | `models/salary_record_test.rb`: open flag, only one open record; integrity SQL |
 | I10 no overlapping periods | `ChangeService` under row lock; model validation; integrity SQL | `models/salary_record_test.rb`: overlap; `services/salaries/change_service_test.rb`; `lib/demo/integrity_check_test.rb` |
 | I11 history immutable, dates read-only | `attr_readonly`; `CorrectionService` | `models/salary_record_test.rb`: read-only columns; `services/salaries/correction_service_test.rb` |
-| I12 no hard deletes | FK (RESTRICT); `restrict_with_exception` | `models/country_test.rb`, `department_test.rb`, `salary_record_test.rb`. No destroy routes: to be verified in Phase 4 |
+| I12 no hard deletes | FK (RESTRICT); `restrict_with_exception`; no destroy routes | `models/country_test.rb`, `department_test.rb`, `salary_record_test.rb`; `integration/api/v1/employees_test.rb` and `salary_records_test.rb` (`DELETE` → 404, record kept) |
 | I13 salary not before hire | Model (both sides); integrity SQL | `models/salary_record_test.rb`, `models/employee_test.rb`, `services/salaries/change_service_test.rb`, `services/employees/create_service_test.rb`, `lib/demo/integrity_check_test.rb` |
 
-Open gap: I12's "no destroy routes" belongs to the API and is checked in Phase 4. No other gaps.
+No open gaps: I12's "no destroy routes" was verified in 4.3 (employees) and 4.4 (salary records).

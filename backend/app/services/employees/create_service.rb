@@ -23,8 +23,10 @@ module Employees
         salary = Salaries::ChangeService.call(employee: employee, attributes: @salary_attributes)
         next if salary.persisted?
 
+        # import keeps the original error (type and message) without the employee having to
+        # respond to "initial_salary.<attribute>" when messages are generated.
         salary.errors.each do |error|
-          employee.errors.add(:"initial_salary.#{error.attribute}", error.type, message: error.message)
+          employee.errors.import(error, attribute: :"initial_salary.#{error.attribute}")
         end
         raise ActiveRecord::Rollback
       end

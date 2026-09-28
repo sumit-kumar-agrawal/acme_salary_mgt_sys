@@ -218,6 +218,8 @@ There is no `DELETE`: to remove an employee, set `employment_status` to `termina
 
 Responses: `201` with the §6.2 body. `422 validation_failed` returns field errors; errors on the salary use the prefix `initial_salary.` (e.g. `"initial_salary.amount": ["must be greater than 0"]`). If anything fails, nothing is created.
 
+Error `details` use the request's field names: a missing or unknown country or department is reported under `country_id` / `department_id`, and an unknown salary currency under `initial_salary.currency_code`. An unparseable `hired_on` is `422` (`"must be a date in YYYY-MM-DD format"`), not silently ignored. A body without the `employee` key is `400` with `"details": {"employee": ["is required"]}`. Unknown fields (e.g. `id`, `created_at`) are ignored.
+
 ### 6.4 `PATCH /employees/:id`
 
 The permitted fields are those in §6.3 except `initial_salary`, and any subset may be sent. Salary is never changed through this endpoint; use §7.

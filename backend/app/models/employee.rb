@@ -21,6 +21,7 @@ class Employee < ApplicationRecord
   validates :email, length: { maximum: 255 }, format: { with: URI::MailTo::EMAIL_REGEXP },
     uniqueness: { case_sensitive: false }, allow_nil: true
   validate :hired_on_not_after_first_salary
+  validate :hired_on_is_a_date
 
   # The salary record in effect on `date` (D7), or nil.
   def current_salary(date = Date.current)
@@ -28,6 +29,13 @@ class Employee < ApplicationRecord
   end
 
   private
+
+  # An unparseable date would otherwise be cast to nil and silently dropped.
+  def hired_on_is_a_date
+    return if hired_on.present? || hired_on_before_type_cast.blank?
+
+    errors.add(:hired_on, :invalid, message: "must be a date in YYYY-MM-DD format")
+  end
 
   # I13, employee side (J10): moving hired_on must not leave a salary starting before hire.
   def hired_on_not_after_first_salary

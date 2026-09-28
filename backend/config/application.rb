@@ -23,6 +23,10 @@ module Backend
     #
     # Effective dates and "today" are evaluated in UTC (docs/architecture.md §8, D9).
     config.time_zone = "UTC"
+
+    # API controllers turn unexpected exceptions into a generic 500 JSON envelope (BACKEND_PLAN.md L11).
+    # Disabled in test so real failures surface; one test re-enables it.
+    config.x.api_rescue_unexpected_errors = true
     # config.eager_load_paths << Rails.root.join("extras")
   end
 end

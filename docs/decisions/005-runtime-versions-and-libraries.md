@@ -29,16 +29,11 @@ The project owner generated `backend/` with the Rails 8 default generator, not t
 | `dotenv-rails` | Loads the local `.env` file (owner decision E3). Kept in the default group by owner decision (G4) |
 | `solid_cache` | MySQL-backed `Rails.cache`. Also serves as the store for login `rate_limit` (ADR 004), so no Redis is needed |
 | `solid_queue` | MySQL-backed Active Job adapter. No jobs are planned; kept as the Rails 8 default with no extra infrastructure |
+| `bcrypt` (~> 3.1.7) | `has_secure_password` for the HR login (ADR 004); added 2026-09-28 in 4.1 (L3) |
 
 **Adopted development/test gems:** `debug`, `brakeman` (security scan), `rubocop-rails-omakase` (style), `faker` (synthetic data for factories and development demo seeds; added 2026-09-28, J1), `web-console`. Test-only: `capybara`, `selenium-webdriver`, `factory_bot_rails` (factories for employees and salary records; added 2026-09-28, J1). Reference data in tests comes from Rails fixtures.
 
 **Backend test framework:** Minitest, as generated (`backend/test/`, run with `bin/rails test`). The owner reverted G2 on 2026-09-28. `rspec-rails` is not used.
-
-**Still to add, in the subphase that first needs them**
-
-| Gem | When | Justification |
-|---|---|---|
-| `bcrypt` | 4.1 | `has_secure_password` (ADR 004). Present in the Gemfile but commented out |
 
 **Removed on 2026-09-28:** `solid_cable` and `db/cable_schema.rb` (G3: no WebSocket use case; production Action Cable uses the in-process `async` adapter).
 

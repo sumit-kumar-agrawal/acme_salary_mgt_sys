@@ -1,9 +1,8 @@
 require "test_helper"
-require "rake"
 
 class DemoRakeTest < ActiveSupport::TestCase
   setup do
-    Rails.application.load_tasks unless Rake::Task.task_defined?("demo:seed")
+    ActiveSupport::TestCase.load_rake_tasks_once
   end
 
   %w[demo:seed demo:reset].each do |task_name|

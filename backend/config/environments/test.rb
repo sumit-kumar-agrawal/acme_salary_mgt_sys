@@ -20,7 +20,11 @@ Rails.application.configure do
 
   # Show full error reports.
   config.consider_all_requests_local = true
-  config.cache_store = :null_store
+  # Memory store so the login rate limit is exercised in tests (BACKEND_PLAN.md L8, G9).
+  config.cache_store = :memory_store
+
+  # Let unexpected API errors raise in tests instead of becoming a 500 envelope (L11).
+  config.x.api_rescue_unexpected_errors = false
 
   # Render exception templates for rescuable exceptions and raise for other exceptions.
   config.action_dispatch.show_exceptions = :rescuable
