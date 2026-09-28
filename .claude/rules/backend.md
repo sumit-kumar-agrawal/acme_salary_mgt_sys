@@ -9,6 +9,7 @@ paths:
 - Keep controllers thin.
 - Use ActiveRecord for persistence.
 - Use RESTful API conventions.
+- Use JSON builder for API responses.
 - Use service objects for multi-step business logic.
 - Use query objects for complex analytics queries.
 - Use database transactions for salary changes.
