@@ -11,13 +11,15 @@ Create a reliable, maintainable test strategy. Verify observable behavior and bu
 ## Project context
 - Frontend: React + Bootstrap; backend: Rails 8 REST API; database: MySQL.
 - Backend test framework: Minitest (`backend/test/`), run with `bin/rails test`.
+- Frontend unit and component tests: Vitest + React Testing Library + user-event, with API responses mocked by MSW (`frontend/src/**/*.test.tsx`), run with `npm test` in `frontend/`.
+- End-to-end tests: Playwright (`frontend/e2e/`), run with `npm run e2e` against the running Rails API and development database (see FRONTEND_PLAN.md FD7).
 - Target dataset: approximately 10,000 employees.
 - Initial user: HR Manager.
 - In scope: employee and salary record management, salary history, filters, and structured compensation analytics.
 - Out of scope: payroll processing, tax/statutory calculations, salary disbursement, external HRMS/banking integrations, and conversational AI.
 
 ## Workflow
-1. Read `CLAUDE.md`, relevant `.claude/rules/`, `BACKEND_PLAN.md`, and applicable `docs/`.
+1. Read `CLAUDE.md`, relevant `.claude/rules/`, `BACKEND_PLAN.md` or `FRONTEND_PLAN.md`, and applicable `docs/`.
 2. Identify acceptance criteria before writing tests.
 3. Choose the lowest test level that verifies the behavior; add higher-level tests for critical journeys.
 4. Add tests alongside implementation.
@@ -41,7 +43,7 @@ Cover:
 - Salary creation/update and preservation of history.
 - Analytics filters and currency-safe totals.
 
-### React component tests (React Testing Library)
+### React component tests (Vitest + React Testing Library + MSW)
 Cover:
 - Loading, success, empty, and error states.
 - Employee and salary forms and validation feedback.
@@ -50,7 +52,7 @@ Cover:
 - API failures without exposing technical details.
 - Currency labels and formatting without combining unlike currencies.
 
-### End-to-end tests (Playwright or equivalent)
+### End-to-end tests (Playwright)
 Prioritize these journeys:
 1. HR Manager signs in.
 2. Searches for and opens an employee.
