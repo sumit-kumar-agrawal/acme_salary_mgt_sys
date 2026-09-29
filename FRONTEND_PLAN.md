@@ -860,17 +860,23 @@ Inputs: API spec v2.1 §7 (salary records), §10, §13; requirements FR-02, FR-0
 ### F6.2 Salary change and correction
 **Prompt:** `Per U4–U7 and U9: SalaryChangeDialog and SalaryCorrectionDialog (react-bootstrap Modal) in components/salaries; Record salary change and Correct (editable rows only) buttons; 422 details on fields; salary_record_not_editable handling; refresh history, detail, analytics/report caches. Tests, E2E (U9), screenshots, record.`
 **Tasks:**
-1. `SalaryChangeDialog.tsx` and `SalaryCorrectionDialog.tsx`; buttons in `SalaryHistory`.
-2. Tests:
-   - change: required fields with no request; the default currency; the amount sent as typed; a 422 `effective_from` error; success closes with a notice and refreshes history and detail;
-   - correction: pre-filled values; changed fields only; Save disabled without changes; dates never sent; `salary_record_not_editable` message and refresh; no Correct on historical rows;
-   - dialogs: focus moves in, Esc closes, focus returns.
-3. E2E (U9); screenshots of both dialogs; validation; record.
+1. ~~`SalaryChangeDialog.tsx` and `SalaryCorrectionDialog.tsx`; buttons in `SalaryHistory`.~~ Done 2026-09-29. Also `SalarySaveError.tsx` (API messages with no field) and `useSalaryChange`/`useSalaryCorrection` in `useSalaryRecords.ts` (U4 refresh); `salaryService` gained `change` and `correct`. Two details beyond U5:
+   - **Default currency:** the current salary's; with no current salary (only scheduled or historical records), the latest record's; with no history, none is chosen.
+   - **"Record salary change" is disabled while the history is loading or has failed to load**, so the default currency and the "Must be after …" hint are never based on a missing history.
+2. ~~Tests.~~ Done 2026-09-29:
+   - `salaryService.test.ts` (+2, 3 in total): `change` posts the input; `correct` patches only the given fields;
+   - `SalaryDialogs.test.tsx` (12 tests). Change: focus inside, the current salary's currency, and the date rule as help; required fields with no request; the amount sent as typed, then a notice with history and current salary refreshed; the API's date error on the field; Esc and Cancel close and return focus, and it reopens empty; available with no history (U8). Correction: offered only on editable records; pre-filled with read-only dates, sending only the changed amount; only the currency when only it changes; amount required and the API's amount error; `salary_record_not_editable` message and history refresh; API messages with no field listed.
+3. ~~E2E (U9); screenshots of both dialogs; validation; record.~~ Done 2026-09-29; see the status.
 
 **Acceptance:** Changes preserve history (the previous period closed by the API) and corrections follow D4 + O1 against the real API; all tests and E2E pass.
-**Status:** Not Started
+**Status:** Done (2026-09-29).
+- **Checks under Node 22.23.3:** `npm run typecheck`, `lint` (zero warnings), `test` (**27 files, 167 tests**), and `build` all exit 0; `prettier --check` clean. JS bundle 381.8 kB (119.2 kB gzip).
+- **E2E against the real API** (Claude's Rails on :3126, Vite on :5192, temporary user): **12 passed** in 14.5 s. New U9 journey in `salaries.spec.ts` on a new employee (`EMP-E2E-MUMZHBBN`, hired and paid from 2025-01-01, INR): a change from 2026-01-01 makes the first record Historical, ending 2025-12-31, and updates the Current salary card; a change from next January is Scheduled and closes the current period on 31 December; correcting the scheduled amount (95,000.00 → 96,000.00) updates it in place (still 3 records); the Historical row has no Correct button.
+- **Cleanup verified:** temporary user deleted (deleted=1, `User.count` = 1), auth file removed, ports free. **Data added by this run:** two `EMP-E2E-*` employees (the U9 one and the one from `employee-forms.spec.ts`).
+- **Mutation check:** sending the amount even when unchanged is caught by the two "only the changed fields" correction tests (2 of 12 fail); the code was restored and the suite re-run green.
+- **Screenshots reviewed** (desktop, the U9 employee): the change dialog has an empty amount, INR pre-selected, and the help "The previous period ends the day before. History is kept. Must be after 2027-01-01."; the correction dialog has the wording steering raises to Record salary change, read-only dates (2027-01-01 / —), the amount and currency pre-filled, and Save correction disabled until something changes. Behind both, the history shows Scheduled / Current / Historical with Correct only on the first two. **Note:** the native date input shows the browser's locale format (dd/mm/yyyy here), while hints and tables use ISO dates. This is cosmetic and left as is.
 
-**Phase gate:** History is preserved and shown correctly; the correction rules follow the API; all module tests pass.
+**Phase gate:** History is preserved and shown correctly; the correction rules follow the API; all module tests pass. **Passed 2026-09-29:** the U9 journey on the real API shows the previous period closed by the API and a correction that changes only the amount, with no Correct on historical rows; all unit, component, and E2E tests pass.
 
 ---
 
@@ -971,6 +977,7 @@ Inputs: API spec v2.1 §7 (salary records), §10, §13; requirements FR-02, FR-0
 | 2026-09-29 | F6 (review) | Reviewed F6 against API §7, §10, §13, FR-02/03, D4/D6/D8/O1/I13, ADR 003, the data-display rules, and the F5 detail page. Recorded U1–U9, assumptions, dependencies, and risks; rewrote F6.1 (history view) and F6.2 (change and correction dialogs). Key points: history is a section on the employee detail page (DataTable, API order, own currency per row); status and editable are used as given; a salary change refreshes the detail's current salary and the analytics and report caches; correction dialogs send only amount/currency (dates read-only), with wording that steers raises to Record salary change; E2E only on a new `EMP-E2E-*` employee | Read-only: API spec §7 and the current frontend code. No code written | Owner: approve U1–U9 |
 | 2026-09-29 | F6 (U decisions) | Owner approved U1–U9 as recommended | Plan update only | — |
 | 2026-09-29 | F6.1 | `salaryService` (`list`) + `salary.types.ts`; `components/salaries/` (`useSalaryRecords` with the U4 key, `SalaryStatusBadge`, `SalaryHistory`); the Salary history section on `EmployeeDetailPage`; default MSW handler and `salaryRecords` fixture. E2E `salaries.spec.ts` | format, typecheck, lint, test (26 files, 153 tests), and build exit 0; E2E 11/11 on the real API (temporary user; cleanup verified); per-row currency mutation caught; history screenshot reviewed | Next: F6.2 on the owner's go-ahead |
+| 2026-09-29 | F6.2 | `SalaryChangeDialog`, `SalaryCorrectionDialog`, `SalarySaveError`; Record salary change and Correct (editable rows only) in `SalaryHistory`; `useSalaryChange`/`useSalaryCorrection` (U4 refresh); `salaryService.change`/`correct`. Default currency falls back to the latest record's when there is no current salary; Record salary change is disabled while the history is loading or failed. U9 journey in `salaries.spec.ts`. F6 gate passed | typecheck, lint, test (27 files, 167 tests), and build exit 0; prettier clean; E2E 12/12 on the real API (temporary user; cleanup verified, `User.count` = 1); changed-fields-only mutation caught; both dialog screenshots reviewed | Owner: commit F6 |
 
 ## Current progress
 - **F1** — Frontend design and decisions — **Done (gate passed 2026-09-29)**
@@ -978,5 +985,5 @@ Inputs: API spec v2.1 §7 (salary records), §10, §13; requirements FR-02, FR-0
 - **F3** — Authentication and app shell — **Done (gate passed 2026-09-29)**. F3.1, F3.2 Done.
 - **F4** — Shared components — **Done (gate passed 2026-09-29)**. F4.1, F4.2 Done.
 - **F5** — Employees — **Done (gate passed 2026-09-29)**. F5.1, F5.2, F5.3 Done.
-- **F6** — Salary history — **In progress.** F6.1 Done (2026-09-29); F6.2 Not Started.
-- **Next:** F6.2 (salary change and correction dialogs)
+- **F6** — Salary history — **Done (gate passed 2026-09-29)**. F6.1, F6.2 Done.
+- **Next:** F7 review (analytics and reports), after the owner commits F6
