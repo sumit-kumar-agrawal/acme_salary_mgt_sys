@@ -95,7 +95,7 @@ sequenceDiagram
     Note over S: rate_limit: 5 attempts / 1 min per IP
     S->>U: find_by(email)&.authenticate(password)
     alt valid
-        S->>S: reset_session; session[:user_id]=id; session[:last_seen_at]=now
+        S->>S: reset_session, then session[:user_id]=id, session[:last_seen_at]=now
         S-->>C: 200 {user:{email}, csrf_token} + Set-Cookie (HttpOnly, SameSite=Lax, Secure in prod)
     else invalid
         S-->>C: 401 {error:{code:"invalid_credentials"}}  (same message for unknown email or wrong password)
