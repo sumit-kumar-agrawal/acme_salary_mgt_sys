@@ -6,6 +6,10 @@ test("the employee list searches, filters, sorts, and pages through real data", 
   page,
 }) => {
   await page.goto("/");
+  await page
+    .getByRole("navigation", { name: "Main" })
+    .getByRole("link", { name: "Employees" })
+    .click();
   await expect(page).toHaveURL("/employees");
   await expect(page.getByText(/^Showing 1–25 of [\d,]+$/)).toBeVisible();
 

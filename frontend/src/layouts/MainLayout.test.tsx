@@ -14,7 +14,7 @@ afterEach(() => setCsrfToken(null));
 async function renderSignedIn() {
   mockSessionBackend({ signedIn: true });
   renderWithProviders(<App />);
-  await screen.findByRole("heading", { name: "Employees" });
+  await screen.findByRole("heading", { name: "Dashboard" });
   return userEvent.setup();
 }
 
@@ -28,7 +28,7 @@ describe("MainLayout", () => {
     expect(screen.getByRole("main")).toHaveAttribute("id", "main");
     expect(screen.getAllByRole("main")).toHaveLength(1);
     await waitFor(() =>
-      expect(document.title).toBe("Employees · Salary Management"),
+      expect(document.title).toBe("Dashboard · Salary Management"),
     );
   });
 
@@ -44,8 +44,12 @@ describe("MainLayout", () => {
     await renderSignedIn();
 
     const nav = screen.getByRole("navigation", { name: "Main" });
-    const link = within(nav).getByRole("link", { name: "Employees" });
+    const link = within(nav).getByRole("link", { name: "Dashboard" });
     expect(link).toHaveAttribute("aria-current", "page");
+    // "/" is matched exactly, so Dashboard is not also marked on other pages.
+    expect(
+      within(nav).getByRole("link", { name: "Employees" }),
+    ).not.toHaveAttribute("aria-current");
   });
 
   it("opens and closes the sidebar with the small-screen menu button", async () => {

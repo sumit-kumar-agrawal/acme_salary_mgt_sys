@@ -178,7 +178,7 @@ describe("AnalyticsPage", () => {
     ]);
     expect(
       within(inr)
-        .getAllByTestId("band-bar")
+        .getAllByTestId("count-bar")
         .map((bar) => bar.style.width),
     ).toEqual(["100%", "25%", "0%"]);
 
@@ -186,7 +186,7 @@ describe("AnalyticsPage", () => {
     const jpy = within(distribution).getByRole("table", {
       name: "JPY salary distribution",
     });
-    expect(within(jpy).getByTestId("band-bar").style.width).toBe("100%");
+    expect(within(jpy).getByTestId("count-bar").style.width).toBe("100%");
     expect(
       within(distribution).getByRole("heading", { name: "JPY: 1 employee" }),
     ).toBeInTheDocument();

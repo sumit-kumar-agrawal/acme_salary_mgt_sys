@@ -132,6 +132,7 @@ None block FR-01 to FR-07.
 | Page (route) | Requirements | API |
 |---|---|---|
 | Sign in (`/sign-in`) | FR-07 | `GET/POST /session` |
+| Dashboard (`/`, added 2026-09-30, F7.3) | FR-05 | `GET /analytics/summary`, `/breakdown` (country, department) |
 | Employees list (`/employees`) | FR-01, FR-04 | `GET /employees`, reference lists |
 | New employee (`/employees/new`) | FR-01, FR-02 | `POST /employees` (optional `initial_salary`) |
 | Employee detail (`/employees/:id`) | FR-01–FR-03 | `GET /employees/:id`, `GET …/salary_records`; salary change `POST`, correction `PATCH` (dialogs) |
@@ -906,6 +907,8 @@ Inputs: API spec v2.1 §8 (analytics), §9 (report and CSV), §10, §13; require
 
 **Owner decisions (2026-09-29):** V1–V12 approved as recommended, with **V8 option (a)**: no chart library. FD3 and ADR 006 amended; Q2/Q3 kept as history (Chart.js is not installed).
 
+**Amended 2026-09-30 (owner request, F7.3):** V1's "`/` keeps redirecting to `/employees`" is replaced: `/` is now the Dashboard, first in the sidebar.
+
 | ID | Decision | Recommendation | Needed by |
 |---|---|---|---|
 | V1 | **Routes and navigation.** | `/analytics` (the F1.1 page map) for the dashboard, in `components/dashboard/` (`AnalyticsPage.tsx`), and `/reports/salaries` for the report in `components/reports/` (`SalaryReportPage.tsx`). Sidebar: Employees, Analytics, Salary report (each added when its page exists, R9). `/` keeps redirecting to `/employees`: managing employees is the main task, and the dashboard runs three aggregate queries over ~10k employees | F7.1 |
@@ -991,6 +994,29 @@ Inputs: API spec v2.1 §8 (analytics), §9 (report and CSV), §10, §13; require
 - **Mutation check:** exporting with the table's `page`/`per_page` (one page instead of every row) is caught by the service test and the page's export test; restored and re-run green.
 - **Screenshots reviewed:** desktop (Germany, by amount): rows ascending within EUR, the count and grouping note, the links, and the filters in full after the two-row fix; the `export_too_large` warning, shown by answering the CSV request with the API's documented `422` in the browser, since demo data can't exceed 9,434 rows; phone: 0 px horizontal overflow on the report and the employee list, with the new Salary report button wrapping cleanly.
 
+### F7.3 Dashboard (owner request 2026-09-30)
+**Request:** "add dashboard nav link in side and make it is root. Need to add chart summary by currency there, total number of employes count, count as country by employee and department by."
+
+**Choices made while building.** Claude asked three questions and got no answer, so it used the recommended option each time. Each keeps the approved rules and can be changed:
+
+| ID | Decision | Chosen |
+|---|---|---|
+| W1 | Route and navigation | `/` renders `DashboardPage` (no redirect); "Dashboard" is first in the sidebar (`end` match, so it is current only on `/`). Analytics and the report stay as they are; the dashboard links to both |
+| W2 | What the currency chart shows | **Employees per currency** (a count, so it can be compared across currencies), with each currency's **average monthly salary as text** in that currency. Amounts are never on a shared axis or added up (data-display rules) |
+| W3 | How charts are drawn | **Bootstrap bars, no library (V8 a kept).** The bars were moved into a shared `components/dashboard/CountBars` table, now used by the dashboard and the Analytics distribution |
+| W4 | Which employees are counted | **Active and on leave**, as in Analytics. Tiles: Employees (`employees_in_scope`), With a salary today (in scope − without salary), and Currencies paid. By country and by department: the unfiltered breakdown's per-currency `employee_count`s added up per dimension (counts, not money), so these cover employees with a salary today, as the page says. Alternative not taken: all employees, including terminated, via one employee-list request per country and department (17 requests) |
+
+**Tasks:** ~~`CountBars` (shared bars, `SalaryDistribution` refactored onto it); `DashboardPage` (tiles, employees by currency, by country, by department; each section with its own loading, error with Retry, and empty state); route `/` and the sidebar link; default MSW handlers for the analytics summary and breakdown (the app now opens on the dashboard); tests updated where `/` used to mean the employee list (`MainLayout`, routing, `EmployeeListPage`, E2E `employees.spec.ts`).~~ Done 2026-09-30.
+
+**Tests:** `DashboardPage.test.tsx` (6): home page, first sidebar link and current, API date, no filters sent, both breakdowns requested; headcount tiles; employees per currency with averages as text, bars scaled by count, no total; country and department counts adding each dimension's currencies (Germany EUR 1,100 + USD 52 = 1,152); empty states; a failed breakdown with Retry while the currency chart still shows. The distribution test now uses the shared bar test id.
+
+**Status:** Done (2026-09-30).
+- **Checks:** `prettier --check`, typecheck, lint (zero warnings), test (**32 files, 199 tests**; two shuffled orders), and build all exit 0. JS bundle 400.3 kB (123.9 kB gzip).
+- **E2E against the real API** (Rails :3129, Vite :5195, temporary user): **15 passed**. New `dashboard.spec.ts` (read-only): `/` shows the Dashboard with its sidebar link current; the tiles match the API summary; each currency row's count matches; each country's count equals the breakdown's per-currency counts added up. The first run failed as expected on the old `employees.spec.ts` assumption that `/` leads to `/employees`; that test now opens the list from the sidebar.
+- **Cleanup verified:** temporary user deleted (`User.count` = 1), auth file removed, ports free; the two runs added four `EMP-E2E-*` employees (10,019 now).
+- **Mutation check:** keeping only the last currency's count per country (instead of adding them up) is caught by the country/department test; restored and re-run green.
+- **Screenshots reviewed:** desktop: three tiles, 7 currency rows with averages in their own currencies, and 8 countries and 8 departments side by side; phone: 0 px horizontal overflow.
+
 **Phase gate:** Analytics and reports match the API for the same filters; export works and handles the cap; all module tests pass. **Passed 2026-09-30:** the analytics E2E compares every card with the API for the same filters; the report E2E compares the first page and the total with the API, and the CSV holds the same rows in the same order; the cap is handled (MSW test and a browser-level check of the documented `422`); all unit, component, and E2E tests pass.
 
 ---
@@ -1074,6 +1100,7 @@ Inputs: API spec v2.1 §8 (analytics), §9 (report and CSV), §10, §13; require
 | 2026-09-29 | F7 (V decisions) | Owner approved V1–V12 as recommended, with V8 option (a): the distribution is a table per currency with Bootstrap bars, and no chart library is used. FD3, the stack line, and ADR 006 (Charts row, alternatives) amended | Plan and ADR update only | — |
 | 2026-09-29 | F7.1 | `analyticsService` + `analytics.types.ts`; `components/dashboard/` (`AnalyticsPage` at `/analytics`, `useAnalytics` with the V6 keys, `SummaryCards`, `SalaryDistribution` as tables with bars and no chart library, `BreakdownTable`); sidebar link; `formatEmployeeCount`; `analytics` MSW fixture. E2E `analytics.spec.ts` compares the page with the API for the same filters. Fixed: breakdown rows under the wrong header while switching; page-wide horizontal scroll on phones (`MainLayout` `min-width: 0`, all table pages) | prettier, typecheck, lint, test (29 files, 178 tests; two shuffled orders), and build exit 0; E2E 13/13 on the real API (temporary user; cleanup verified, `User.count` = 1); bar-scale mutation caught; desktop and phone screenshots reviewed | Next: F7.2 on the owner's go-ahead |
 | 2026-09-30 | F7.2 | `apiDownload` in `api.ts` (shared fetch and error handling with `apiRequest`); `reportService` + `report.types.ts`; `components/reports/` (`SalaryReportPage` at `/reports/salaries`, `useSalaryReport`, `ExportCsvButton`); sidebar link and the employee list's Salary report button (G1); `salaryReport` MSW fixture. E2E `reports.spec.ts` compares the report with the API and checks the downloaded CSV. F7 gate passed | prettier, typecheck, lint, test (31 files, 193 tests; two shuffled orders), and build exit 0; E2E 14/14 on the real API (temporary user; cleanup verified, `User.count` = 1); export-page mutation caught; desktop, export-too-large, and phone screenshots reviewed | Owner: commit F7 (F7.1 + F7.2). Correction to the F7.1 status: each E2E run adds two `EMP-E2E-*` employees, not one |
+| 2026-09-30 | F7.3 (owner request) | Dashboard at `/` (sidebar first): headcount tiles, employees per currency with averages as text, employees by country and by department (breakdown counts added per dimension); shared `CountBars` (the distribution refactored onto it); default analytics MSW handlers; tests and one E2E updated for the new root. W1–W4 chosen by Claude with the recommended options (the questions got no answer); V1 amended | prettier, typecheck, lint, test (32 files, 199 tests; two shuffled orders), and build exit 0; E2E 15/15 on the real API (temporary user; cleanup verified, `User.count` = 1); headcount-sum mutation caught; desktop and phone screenshots reviewed | Owner: confirm W2 and W4 (or pick the alternatives); commit F7 |
 
 ## Current progress
 - **F1** — Frontend design and decisions — **Done (gate passed 2026-09-29)**
@@ -1082,5 +1109,5 @@ Inputs: API spec v2.1 §8 (analytics), §9 (report and CSV), §10, §13; require
 - **F4** — Shared components — **Done (gate passed 2026-09-29)**. F4.1, F4.2 Done.
 - **F5** — Employees — **Done (gate passed 2026-09-29)**. F5.1, F5.2, F5.3 Done.
 - **F6** — Salary history — **Done (gate passed 2026-09-29)**. F6.1, F6.2 Done.
-- **F7** — Analytics and reports — **Done (gate passed 2026-09-30)**. F7.1, F7.2 Done.
+- **F7** — Analytics and reports — **Done (gate passed 2026-09-30)**. F7.1, F7.2 Done; F7.3 Dashboard (owner request) Done.
 - **Next:** F8 (quality review), after the owner commits F7

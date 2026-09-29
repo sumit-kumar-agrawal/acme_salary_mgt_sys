@@ -23,10 +23,9 @@ async function renderList(
 }
 
 describe("EmployeeListPage", () => {
-  it("is where / leads, with the page title set", async () => {
-    await renderList("/");
+  it("sets the page title", async () => {
+    await renderList();
 
-    expect(currentLocation()).toBe("/employees");
     await waitFor(() =>
       expect(document.title).toBe("Employees · Salary Management"),
     );

@@ -1,7 +1,8 @@
-import { Navigate, Route, Routes } from "react-router";
+import { Route, Routes } from "react-router";
 import SignInPage from "@/components/auth/SignInPage";
 import NotFoundPage from "@/components/common/NotFoundPage";
 import AnalyticsPage from "@/components/dashboard/AnalyticsPage";
+import DashboardPage from "@/components/dashboard/DashboardPage";
 import EmployeeCreatePage from "@/components/employees/EmployeeCreatePage";
 import EmployeeDetailPage from "@/components/employees/EmployeeDetailPage";
 import EmployeeEditPage from "@/components/employees/EmployeeEditPage";
@@ -23,7 +24,7 @@ export default function AppRoutes() {
           </RequireAuth>
         }
       >
-        <Route index element={<Navigate to="/employees" replace />} />
+        <Route index element={<DashboardPage />} />
         <Route path="employees" element={<EmployeeListPage />} />
         <Route path="employees/new" element={<EmployeeCreatePage />} />
         <Route path="employees/:id" element={<EmployeeDetailPage />} />

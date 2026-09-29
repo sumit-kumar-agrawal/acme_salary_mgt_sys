@@ -44,7 +44,7 @@ describe("routing", () => {
     expect(currentLocation()).toBe("/no-such-page?page=2");
   });
 
-  it("ignores an external return path and goes to the employee list instead", async () => {
+  it("ignores an external return path and goes to the dashboard instead", async () => {
     mockSessionBackend();
     renderWithProviders(<App />, {
       route: { pathname: "/sign-in", state: { from: "//evil.example/steal" } },
@@ -53,9 +53,9 @@ describe("routing", () => {
     await signIn();
 
     expect(
-      await screen.findByRole("heading", { name: "Employees" }),
+      await screen.findByRole("heading", { name: "Dashboard" }),
     ).toBeInTheDocument();
-    expect(currentLocation()).toBe("/employees");
+    expect(currentLocation()).toBe("/");
   });
 
   it("sends a signed-in user away from /sign-in", async () => {
@@ -63,9 +63,9 @@ describe("routing", () => {
     renderWithProviders(<App />, { route: "/sign-in" });
 
     expect(
-      await screen.findByRole("heading", { name: "Employees" }),
+      await screen.findByRole("heading", { name: "Dashboard" }),
     ).toBeInTheDocument();
-    expect(currentLocation()).toBe("/employees");
+    expect(currentLocation()).toBe("/");
   });
 
   it("shows a generic not-found page for unknown URLs, without echoing the path", async () => {

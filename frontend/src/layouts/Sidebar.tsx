@@ -5,6 +5,7 @@ import { NavLink } from "react-router";
 // Feature navigation (R9a): a fixed column on large screens, an offcanvas panel below the lg breakpoint.
 // Only pages that exist are listed (R9); each feature adds its link when it is built.
 const NAV_ITEMS = [
+  { to: "/", label: "Dashboard", end: true },
   { to: "/employees", label: "Employees", end: false },
   { to: "/analytics", label: "Analytics", end: false },
   { to: "/reports/salaries", label: "Salary report", end: false },
