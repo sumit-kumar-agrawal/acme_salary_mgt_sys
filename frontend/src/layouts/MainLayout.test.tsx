@@ -52,6 +52,29 @@ describe("MainLayout", () => {
     ).not.toHaveAttribute("aria-current");
   });
 
+  it("groups the sidebar links into labelled sections, with decorative icons only", async () => {
+    await renderSignedIn();
+
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    const sections = within(nav)
+      .getAllByRole("group")
+      .map((group) => [
+        group.getAttribute("aria-labelledby") &&
+          document.getElementById(group.getAttribute("aria-labelledby") ?? "")
+            ?.textContent,
+        within(group)
+          .getAllByRole("link")
+          .map((link) => link.textContent),
+      ]);
+    expect(sections).toEqual([
+      ["Overview", ["Dashboard", "Analytics"]],
+      ["People", ["Employees"]],
+      ["Reports", ["Salary report"]],
+    ]);
+    for (const icon of nav.querySelectorAll("svg"))
+      expect(icon).toHaveAttribute("aria-hidden", "true");
+  });
+
   it("opens and closes the sidebar with the small-screen menu button", async () => {
     setScreenSize("small");
     const user = await renderSignedIn();

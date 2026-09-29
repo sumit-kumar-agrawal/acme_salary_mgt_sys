@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
@@ -11,6 +11,7 @@ import { formatCount } from "@/components/common/format";
 import LoadingState from "@/components/common/LoadingState";
 import NotFoundPage from "@/components/common/NotFoundPage";
 import { reportRenderError } from "@/components/common/reportRenderError";
+import SectionCard from "@/components/common/SectionCard";
 
 describe("LoadingState", () => {
   it("announces what is loading", () => {
@@ -154,5 +155,27 @@ describe("EmploymentStatusBadge", () => {
     expect(screen.getByText("Active")).toHaveClass("bg-success");
     expect(screen.getByText("On leave")).toHaveClass("bg-warning", "text-dark");
     expect(screen.getByText("Terminated")).toHaveClass("bg-secondary");
+  });
+});
+
+describe("SectionCard", () => {
+  it("is a region named by its visible heading, with header actions and content", () => {
+    render(
+      <SectionCard
+        title="Filters"
+        actions={<button type="button">Clear</button>}
+      >
+        <p>Filter fields</p>
+      </SectionCard>,
+    );
+
+    const region = screen.getByRole("region", { name: "Filters" });
+    expect(
+      within(region).getByRole("heading", { level: 2, name: "Filters" }),
+    ).toBeInTheDocument();
+    expect(
+      within(region).getByRole("button", { name: "Clear" }),
+    ).toBeInTheDocument();
+    expect(region).toHaveTextContent("Filter fields");
   });
 });

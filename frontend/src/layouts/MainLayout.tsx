@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Outlet } from "react-router";
 import Header from "@/layouts/Header";
 import Sidebar from "@/layouts/Sidebar";
+import "@/layouts/MainLayout.css";
 
 /** Frame for signed-in pages (R9a, R11): skip link, header, sidebar, and the single main landmark. */
 export default function MainLayout() {
@@ -28,7 +29,7 @@ export default function MainLayout() {
         <main
           id="main"
           tabIndex={-1}
-          className="flex-grow-1 p-4"
+          className="app-main flex-grow-1 p-4"
           style={{ minWidth: 0 }}
         >
           <Outlet />

@@ -12,6 +12,7 @@ import {
   EmploymentStatusSelect,
 } from "@/components/common/ReferenceSelects";
 import SearchInput from "@/components/common/SearchInput";
+import SectionCard from "@/components/common/SectionCard";
 import { useEmployeeList } from "@/components/employees/useEmployees";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { useListParams } from "@/hooks/useListParams";
@@ -103,84 +104,92 @@ export default function EmployeeListPage() {
         </div>
       </div>
 
-      <Row className="g-3 align-items-end mb-3">
-        <Col md={12} lg={4}>
-          <SearchInput
-            key={searchKey}
-            label="Search"
-            placeholder="Name or employee number"
-            onSearch={list.setQ}
-          />
-        </Col>
-        <Col sm={4} lg={2}>
-          <CountrySelect
-            value={list.filters.country_id ?? ""}
-            onChange={(value) => list.setFilter("country_id", value || null)}
-          />
-        </Col>
-        <Col sm={4} lg={2}>
-          <DepartmentSelect
-            value={list.filters.department_id ?? ""}
-            onChange={(value) => list.setFilter("department_id", value || null)}
-          />
-        </Col>
-        <Col sm={4} lg={2}>
-          <EmploymentStatusSelect
-            label="Status"
-            value={list.filters.employment_status ?? ""}
-            onChange={(value) =>
-              list.setFilter("employment_status", value || null)
-            }
-          />
-        </Col>
-        <Col lg={2}>
+      <SectionCard
+        title="Filters"
+        actions={
           <Button
             variant="outline-secondary"
-            className="w-100"
+            size="sm"
             onClick={clearFilters}
             disabled={!hasFilters}
           >
             Clear filters
           </Button>
-        </Col>
-      </Row>
-
-      <DataTable<EmployeeSummary>
-        caption="Employees"
-        columns={columns}
-        rows={employees.data?.data}
-        rowKey={(employee) => employee.id}
-        sort={list.sort}
-        onSortChange={list.setSort}
-        isLoading={employees.isPending}
-        isFetching={employees.isFetching && !employees.isPending}
-        error={employees.isError ? employees.error : undefined}
-        onRetry={() => void employees.refetch()}
-        emptyMessage={
-          hasFilters
-            ? "No employees match these filters."
-            : "There are no employees yet."
         }
-        emptyAction={
-          hasFilters ? (
-            <Button
-              variant="outline-secondary"
-              size="sm"
-              onClick={clearFilters}
-            >
-              Clear filters
-            </Button>
-          ) : undefined
-        }
-      />
+      >
+        <Row className="g-3 align-items-end">
+          <Col md={12} lg={4}>
+            <SearchInput
+              key={searchKey}
+              label="Search"
+              placeholder="Name or employee number"
+              onSearch={list.setQ}
+            />
+          </Col>
+          <Col sm={4} lg={3}>
+            <CountrySelect
+              value={list.filters.country_id ?? ""}
+              onChange={(value) => list.setFilter("country_id", value || null)}
+            />
+          </Col>
+          <Col sm={4} lg={3}>
+            <DepartmentSelect
+              value={list.filters.department_id ?? ""}
+              onChange={(value) =>
+                list.setFilter("department_id", value || null)
+              }
+            />
+          </Col>
+          <Col sm={4} lg={2}>
+            <EmploymentStatusSelect
+              label="Status"
+              value={list.filters.employment_status ?? ""}
+              onChange={(value) =>
+                list.setFilter("employment_status", value || null)
+              }
+            />
+          </Col>
+        </Row>
+      </SectionCard>
 
-      {employees.data && employees.data.meta.total_count > 0 && (
-        <Pagination
-          meta={employees.data.meta}
-          onPageChange={list.setPage}
-          onPerPageChange={list.setPerPage}
+      <SectionCard title="Results" className="mb-0">
+        <DataTable<EmployeeSummary>
+          caption="Employees"
+          columns={columns}
+          rows={employees.data?.data}
+          rowKey={(employee) => employee.id}
+          sort={list.sort}
+          onSortChange={list.setSort}
+          isLoading={employees.isPending}
+          isFetching={employees.isFetching && !employees.isPending}
+          error={employees.isError ? employees.error : undefined}
+          onRetry={() => void employees.refetch()}
+          emptyMessage={
+            hasFilters
+              ? "No employees match these filters."
+              : "There are no employees yet."
+          }
+          emptyAction={
+            hasFilters ? (
+              <Button
+                variant="outline-secondary"
+                size="sm"
+                onClick={clearFilters}
+              >
+                Clear filters
+              </Button>
+            ) : undefined
+          }
         />
-      )}
+
+        {employees.data && employees.data.meta.total_count > 0 && (
+          <Pagination
+            meta={employees.data.meta}
+            onPageChange={list.setPage}
+            onPerPageChange={list.setPerPage}
+          />
+        )}
+      </SectionCard>
     </>
   );
 }

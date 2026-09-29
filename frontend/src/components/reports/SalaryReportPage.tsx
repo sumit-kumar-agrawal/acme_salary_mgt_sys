@@ -14,6 +14,7 @@ import {
   EmploymentStatusSelect,
 } from "@/components/common/ReferenceSelects";
 import SearchInput from "@/components/common/SearchInput";
+import SectionCard from "@/components/common/SectionCard";
 import { formatCount } from "@/components/common/format";
 import ExportCsvButton from "@/components/reports/ExportCsvButton";
 import { useSalaryReport } from "@/components/reports/useSalaryReport";
@@ -103,110 +104,120 @@ export default function SalaryReportPage() {
         <ExportCsvButton query={list.query} />
       </div>
 
-      <Row className="g-3 mb-2">
-        <Col md={12} lg={5}>
-          <SearchInput
-            key={searchKey}
-            label="Search"
-            placeholder="Name or employee number"
-            onSearch={list.setQ}
-          />
-        </Col>
-        <Col sm={6} lg={3}>
-          <FormField
-            label="As of"
-            type="date"
-            value={filters.as_of ?? ""}
-            onChange={(event) =>
-              list.setFilter("as_of", event.target.value || null)
-            }
-            hint="Empty means today."
-          />
-        </Col>
-        <Col sm={6} lg={4}>
-          <CountrySelect
-            value={filters.country_id ?? ""}
-            onChange={(value) => list.setFilter("country_id", value || null)}
-          />
-        </Col>
-        <Col sm={6} lg={4}>
-          <DepartmentSelect
-            value={filters.department_id ?? ""}
-            onChange={(value) => list.setFilter("department_id", value || null)}
-          />
-        </Col>
-        <Col sm={6} lg={4}>
-          <EmploymentStatusSelect
-            label="Status"
-            allLabel="Active and on leave (default)"
-            value={filters.employment_status ?? ""}
-            onChange={(value) =>
-              list.setFilter("employment_status", value || null)
-            }
-          />
-        </Col>
-        <Col lg={4} className="align-self-end">
+      <SectionCard
+        title="Filters"
+        actions={
           <Button
             variant="outline-secondary"
-            className="w-100"
+            size="sm"
             onClick={clearFilters}
             disabled={!hasFilters}
           >
             Clear filters
           </Button>
-        </Col>
-      </Row>
-      <p className="text-body-secondary small mb-3">
-        Country, department, and status are each employee&apos;s current values,
-        also for a past date.
-      </p>
-
-      {meta && (
-        <p className="mb-2" role="status">
-          {formatCount(meta.total_count)}{" "}
-          {meta.total_count === 1 ? "employee" : "employees"}
-          {sortedByAmount &&
-            ". Sorted by amount within each currency (currencies A–Z)"}
-          .
-        </p>
-      )}
-
-      <DataTable<SalaryReportRow>
-        caption="Salary report"
-        columns={columns}
-        rows={report.data?.data}
-        rowKey={(row) => row.employee_id}
-        sort={list.sort}
-        onSortChange={list.setSort}
-        isLoading={report.isPending}
-        isFetching={report.isFetching && !report.isPending}
-        error={report.isError ? report.error : undefined}
-        onRetry={() => void report.refetch()}
-        emptyMessage={
-          hasFilters
-            ? "No salaries match these filters."
-            : "No salaries in effect on this date."
         }
-        emptyAction={
-          hasFilters ? (
-            <Button
-              variant="outline-secondary"
-              size="sm"
-              onClick={clearFilters}
-            >
-              Clear filters
-            </Button>
-          ) : undefined
-        }
-      />
+      >
+        <Row className="g-3">
+          <Col md={12} lg={5}>
+            <SearchInput
+              key={searchKey}
+              label="Search"
+              placeholder="Name or employee number"
+              onSearch={list.setQ}
+            />
+          </Col>
+          <Col sm={6} lg={3}>
+            <FormField
+              label="As of"
+              type="date"
+              value={filters.as_of ?? ""}
+              onChange={(event) =>
+                list.setFilter("as_of", event.target.value || null)
+              }
+              hint="Empty means today."
+            />
+          </Col>
+          <Col sm={6} lg={4}>
+            <CountrySelect
+              value={filters.country_id ?? ""}
+              onChange={(value) => list.setFilter("country_id", value || null)}
+            />
+          </Col>
+          <Col sm={6} lg={4}>
+            <DepartmentSelect
+              value={filters.department_id ?? ""}
+              onChange={(value) =>
+                list.setFilter("department_id", value || null)
+              }
+            />
+          </Col>
+          <Col sm={6} lg={4}>
+            <EmploymentStatusSelect
+              label="Status"
+              allLabel="Active and on leave (default)"
+              value={filters.employment_status ?? ""}
+              onChange={(value) =>
+                list.setFilter("employment_status", value || null)
+              }
+            />
+          </Col>
+          <Col lg={4} className="align-self-end">
+            <p className="text-body-secondary small mb-0">
+              Country, department, and status are each employee&apos;s current
+              values, also for a past date.
+            </p>
+          </Col>
+        </Row>
+      </SectionCard>
 
-      {meta && meta.total_count > 0 && (
-        <Pagination
-          meta={meta}
-          onPageChange={list.setPage}
-          onPerPageChange={list.setPerPage}
+      <SectionCard title="Results" className="mb-0">
+        {meta && (
+          <p className="mb-2" role="status">
+            {formatCount(meta.total_count)}{" "}
+            {meta.total_count === 1 ? "employee" : "employees"}
+            {sortedByAmount &&
+              ". Sorted by amount within each currency (currencies A–Z)"}
+            .
+          </p>
+        )}
+
+        <DataTable<SalaryReportRow>
+          caption="Salary report"
+          columns={columns}
+          rows={report.data?.data}
+          rowKey={(row) => row.employee_id}
+          sort={list.sort}
+          onSortChange={list.setSort}
+          isLoading={report.isPending}
+          isFetching={report.isFetching && !report.isPending}
+          error={report.isError ? report.error : undefined}
+          onRetry={() => void report.refetch()}
+          emptyMessage={
+            hasFilters
+              ? "No salaries match these filters."
+              : "No salaries in effect on this date."
+          }
+          emptyAction={
+            hasFilters ? (
+              <Button
+                variant="outline-secondary"
+                size="sm"
+                onClick={clearFilters}
+              >
+                Clear filters
+              </Button>
+            ) : undefined
+          }
         />
-      )}
+
+        {meta && meta.total_count > 0 && (
+          <Pagination
+            meta={meta}
+            onPageChange={list.setPage}
+            onPerPageChange={list.setPerPage}
+          />
+        )}
+      </SectionCard>
     </>
   );
 }

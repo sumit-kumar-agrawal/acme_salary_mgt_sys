@@ -1,0 +1,33 @@
+/* Main content area: slightly smaller text than the browser default (14px instead of 16px) for dense data
+   pages. Bootstrap sizes form controls and buttons in rem, so they are set here too; headings keep their
+   own sizes. Only Bootstrap's CSS variables are used, so the theme still applies. */
+
+.app-main {
+  font-size: 0.875rem;
+}
+
+.app-main .form-control,
+.app-main .form-select,
+.app-main .input-group-text {
+  font-size: 0.875rem;
+}
+
+.app-main .btn {
+  --bs-btn-font-size: 0.875rem;
+}
+
+.app-main .form-label {
+  margin-bottom: 0.25rem;
+  font-weight: 500;
+}
+
+/* Section cards: a tinted header so filters and results read as separate panels. */
+.app-section-card > .card-header {
+  background-color: var(--bs-tertiary-bg);
+  padding-top: 0.625rem;
+  padding-bottom: 0.625rem;
+}
+
+.app-section-card .table {
+  margin-bottom: 0;
+}
