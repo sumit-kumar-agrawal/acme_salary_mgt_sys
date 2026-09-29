@@ -18,24 +18,25 @@ A single-page application in `frontend/` (monorepo, ADR 001), built with Vite. I
 | Language | TypeScript 6.0 (strict + `noUncheckedIndexedAccess`). TypeScript 7 is not yet supported by typescript-eslint |
 | Build and dev server | Vite 8.3 with @vitejs/plugin-react 6.1 (dev proxy `/api` → `VITE_PROXY_TARGET`, default `http://localhost:3000`, `changeOrigin: false`) |
 | UI | React 19.3; Bootstrap 5.3.8 with react-bootstrap 2.10 |
-| Routing | React Router (installed in F3.2; 7.x, or 8.x now that Node ≥22.22 is available, decided there) |
-| Server state | TanStack Query 5 (installed in F2.2), through typed API modules in `src/api/` |
+| Routing | React Router 8.4 in declarative mode (installed in F3.2; FRONTEND_PLAN.md R1): `BrowserRouter` in `main.tsx`, routes in `src/routes/` |
+| Server state | TanStack Query 5 (installed in F2.2), through typed service objects in `src/services/` |
 | Session state | React Context (`AuthProvider`): user and CSRF token, in memory |
 | UI state | Local component state and the URL (filters, sort, page; not `q`) |
 | Charts | Chart.js 4.5 with react-chartjs-2 5.3 (installed in F7.1) |
 | Forms | Plain controlled components; the API's `422` `details` are shown per field |
 | Unit and component tests | Vitest 5.0, jsdom 30, React Testing Library 16.3, user-event 14.6, jest-dom 7.0, MSW 3.0 |
-| End-to-end tests | Playwright 1.63 (installed in F3.1) against the real Rails API and development database |
+| End-to-end tests | Playwright 1.63, Chromium only (installed in F3.1; the browser lives in the user cache, not the repo), against the real Rails API and development database. One sign-in per run via a setup project; the saved session file (`playwright/.auth/`) is git-ignored |
 | Lint and format | ESLint 9.39 (typescript-eslint 8.71 `recommendedTypeChecked`, react-hooks, react-refresh, jsx-a11y), eslint-config-prettier, Prettier 3.9 (defaults). ESLint 9 is marked deprecated upstream, but jsx-a11y does not support ESLint 10 yet; move to 10 when it does |
 | Package manager | npm (lockfile committed) |
 
 Conventions (enforced by `.claude/rules/frontend/*`):
 
-- **API access:** only `src/api/` calls `fetch`. One client owns the base path (`VITE_API_BASE_URL`, default `/api/v1`, same-site only), `credentials`, JSON, `X-CSRF-Token` on writes, and mapping the error envelope to a typed error.
+- **API access:** only `src/services/` calls `fetch`. One client owns the base path (`VITE_API_BASE_URL`, default `/api/v1`, same-site only), `credentials`, JSON, `X-CSRF-Token` on writes, and mapping the error envelope to a typed error.
 - **Session:** the signed-in user and CSRF token live in memory (React context), never in browser storage. The token returned by sign-in replaces the earlier one. A `401` means signed out.
 - **Money:** amounts are shown as the API's decimal strings, always with `currency_code`, labelled monthly. There is no cross-currency arithmetic and no floating-point money; `Number` is used only to size chart bars (ADR 002).
 - **URL state:** list filters, sort, and page live in the URL so they can be shared and work with the back button, **except the search text `q`**, which is kept out of URLs and browser history.
-- **Structure:** pages live in `src/features/<area>/` and shared, non-fetching UI in `src/components/`. There is no Redux or other global store, no form library, and no internationalisation (English only).
+- **Structure (owner decision 2026-09-29):** `src/components/common/` reusable UI; `src/components/<feature>/` per feature (`auth`, `employees`, `salaries`, `dashboard`, `reports`: pages and feature components); `src/layouts/` main layout, header, navbar, sidebar; `src/routes/` app routes; `src/hooks/` custom hooks (e.g. `useAuth`); `src/services/api.ts` HTTP core (`apiRequest`, `ApiError`, in-memory CSRF token, envelope types), `src/services/queryClient.ts`, and one service object per feature (`authService.ts` + `auth.types.ts`, later `employeeService.ts` + `employee.types.ts`, …). Folders are created only when a real feature needs them.
+- **Render errors:** the React root is created with `onCaughtError`, `onUncaughtError`, and `onRecoverableError` handlers that log only the error name (`reportRenderError`). React 19's default logs the full error object to the console, even in production.
 - **Testing:** there is no separate testing phase. Each module ships with its own component tests (Vitest, React Testing Library, MSW) and, where it completes a user journey, a Playwright test, and is validated before it is Done (FRONTEND_PLAN.md module workflow).
 
 ## Rationale

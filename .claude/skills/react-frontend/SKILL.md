@@ -11,12 +11,12 @@ Before making changes:
 
 1. Read `FRONTEND_PLAN.md` (the current subphase, its decisions, and gaps) and `docs/decisions/006-frontend-architecture.md`.
 2. Read the relevant sections of `docs/api-specification.md`, especially §13, the client integration notes. The Rails API is the contract; do not change the backend.
-3. Identify the affected pages (`src/features/<area>/`), shared components (`src/components/`), and API modules (`src/api/`).
+3. Identify the affected feature folder (`src/components/<feature>/`), reusable components (`src/components/common/`), layouts (`src/layouts/`), routes (`src/routes/`), hooks (`src/hooks/`), and API services (a `<feature>Service` object in `src/services/<feature>Service.ts`, types in `<feature>.types.ts`, calling `apiRequest` from `src/services/api.ts`).
 4. Propose a plan for significant changes.
 
 Implementation:
 
-- Add API calls only in `src/api/`, with types that mirror the spec, and use them through TanStack Query hooks.
+- Add API calls only in `src/services/` (a `<feature>Service` object using `apiRequest` from `api.ts`), with types that mirror the spec, and use them through TanStack Query hooks.
 - Build pages from shared components; keep loading, empty, and error states explicit.
 - Display money, currency, dates, and statuses per `frontend/data-display.md`.
 - Map `422` `details` to form fields; handle `401` by returning to sign-in.

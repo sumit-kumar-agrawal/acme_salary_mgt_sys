@@ -1,8 +1,13 @@
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { apiRequest, buildUrl, setUnauthorizedHandler } from "@/api/client";
-import { setCsrfToken } from "@/api/csrf";
-import { ApiError } from "@/api/errors";
+import {
+  ApiError,
+  apiRequest,
+  buildUrl,
+  setCsrfRefresher,
+  setCsrfToken,
+  setUnauthorizedHandler,
+} from "@/services/api";
 import { server } from "@/test/server";
 
 // Synthetic data only. Each test registers the handlers it needs; unhandled requests fail (src/test/setup.ts).
@@ -28,6 +33,7 @@ async function captureError(promise: Promise<unknown>): Promise<ApiError> {
 afterEach(() => {
   setCsrfToken(null);
   setUnauthorizedHandler(null);
+  setCsrfRefresher(null);
   vi.unstubAllEnvs();
 });
 
@@ -44,19 +50,15 @@ describe("apiRequest: success", () => {
       }),
     );
 
-    const body = await apiRequest<{ data: { id: number }[] }>(
-      "GET",
-      "/employees",
-      {
-        query: {
-          page: 2,
-          q: "",
-          country_id: null,
-          department_id: undefined,
-          employment_status: "active",
-        },
+    const body = await apiRequest<{ data: { id: number }[] }>("/employees", {
+      query: {
+        page: 2,
+        q: "",
+        country_id: null,
+        department_id: undefined,
+        employment_status: "active",
       },
-    );
+    });
 
     expect(body.data).toEqual([{ id: 1 }]);
     const url = new URL(seen!.url);
@@ -78,7 +80,9 @@ describe("apiRequest: success", () => {
       ),
     );
 
-    await expect(apiRequest("DELETE", "/session")).resolves.toBeUndefined();
+    await expect(
+      apiRequest("/session", { method: "DELETE" }),
+    ).resolves.toBeUndefined();
   });
 
   it("uses VITE_API_BASE_URL when configured, ignoring a trailing slash", () => {
@@ -104,8 +108,9 @@ describe("apiRequest: CSRF token", () => {
       }),
     );
 
-    await apiRequest("POST", "/employees", {
-      body: { employee: { first_name: "Ada" } },
+    await apiRequest("/employees", {
+      method: "POST",
+      body: JSON.stringify({ employee: { first_name: "Ada" } }),
     });
 
     expect(seen).toEqual({
@@ -125,7 +130,7 @@ describe("apiRequest: CSRF token", () => {
       }),
     );
 
-    await apiRequest("GET", "/countries");
+    await apiRequest("/countries");
 
     expect(token).toBeNull();
   });
@@ -141,10 +146,114 @@ describe("apiRequest: CSRF token", () => {
     );
 
     const error = await captureError(
-      apiRequest("PATCH", "/employees/1", { body: { employee: {} } }),
+      apiRequest("/employees/1", {
+        method: "PATCH",
+        body: JSON.stringify({ employee: {} }),
+      }),
     );
 
     expect([error.status, error.code]).toEqual([422, "invalid_csrf_token"]);
+  });
+});
+
+describe("apiRequest: CSRF refresh and retry (R5)", () => {
+  function csrfRejectingEndpoint(acceptedToken: string | null) {
+    const tokens: (string | null)[] = [];
+    server.use(
+      http.post("*/api/v1/employees", ({ request }) => {
+        const token = request.headers.get("X-CSRF-Token");
+        tokens.push(token);
+        if (acceptedToken !== null && token === acceptedToken) {
+          return HttpResponse.json({ data: { id: 7 } }, { status: 201 });
+        }
+        return HttpResponse.json(
+          {
+            error: {
+              code: "invalid_csrf_token",
+              message: "Missing or invalid CSRF token.",
+            },
+          },
+          { status: 422 },
+        );
+      }),
+    );
+    return tokens;
+  }
+
+  it("refreshes the token once and retries a rejected write with the new token", async () => {
+    setCsrfToken("stale");
+    const refresher = vi.fn(() => {
+      setCsrfToken("fresh");
+      return Promise.resolve();
+    });
+    setCsrfRefresher(refresher);
+    const tokens = csrfRejectingEndpoint("fresh");
+
+    await expect(
+      apiRequest("/employees", {
+        method: "POST",
+        body: JSON.stringify({ employee: {} }),
+      }),
+    ).resolves.toEqual({
+      data: { id: 7 },
+    });
+    expect(refresher).toHaveBeenCalledTimes(1);
+    expect(tokens).toEqual(["stale", "fresh"]);
+  });
+
+  it("surfaces a second rejection instead of looping", async () => {
+    setCsrfToken("stale");
+    const refresher = vi.fn(() => Promise.resolve());
+    setCsrfRefresher(refresher);
+    const tokens = csrfRejectingEndpoint(null);
+
+    const error = await captureError(
+      apiRequest("/employees", {
+        method: "POST",
+        body: JSON.stringify({ employee: {} }),
+      }),
+    );
+
+    expect(error.code).toBe("invalid_csrf_token");
+    expect(refresher).toHaveBeenCalledTimes(1);
+    expect(tokens).toHaveLength(2);
+  });
+
+  it("does not refresh for reads, or when no refresher is registered", async () => {
+    const refresher = vi.fn(() => Promise.resolve());
+    setCsrfRefresher(refresher);
+    server.use(
+      http.get("*/api/v1/employees", () =>
+        HttpResponse.json(
+          {
+            error: {
+              code: "invalid_csrf_token",
+              message: "Missing or invalid CSRF token.",
+            },
+          },
+          { status: 422 },
+        ),
+      ),
+    );
+
+    expect((await captureError(apiRequest("/employees"))).code).toBe(
+      "invalid_csrf_token",
+    );
+    expect(refresher).not.toHaveBeenCalled();
+
+    setCsrfRefresher(null);
+    const tokens = csrfRejectingEndpoint(null);
+    expect(
+      (
+        await captureError(
+          apiRequest("/employees", {
+            method: "POST",
+            body: JSON.stringify({}),
+          }),
+        )
+      ).code,
+    ).toBe("invalid_csrf_token");
+    expect(tokens).toHaveLength(1);
   });
 });
 
@@ -160,7 +269,7 @@ describe("apiRequest: API errors", () => {
       ),
     );
 
-    const error = await captureError(apiRequest("GET", "/employees"));
+    const error = await captureError(apiRequest("/employees"));
 
     expect([error.status, error.code, error.message]).toEqual([
       401,
@@ -183,8 +292,9 @@ describe("apiRequest: API errors", () => {
     );
 
     const error = await captureError(
-      apiRequest("POST", "/session", {
-        body: { email: "x@example.test", password: "x" },
+      apiRequest("/session", {
+        method: "POST",
+        body: JSON.stringify({ email: "x@example.test", password: "x" }),
       }),
     );
 
@@ -211,12 +321,15 @@ describe("apiRequest: API errors", () => {
     );
 
     const error = await captureError(
-      apiRequest("POST", "/employees", { body: { employee: {} } }),
+      apiRequest("/employees", {
+        method: "POST",
+        body: JSON.stringify({ employee: {} }),
+      }),
     );
 
     expect([error.status, error.code]).toEqual([422, "validation_failed"]);
     expect(error.details).toEqual(details);
-    expect(error.isClientError).toBe(true);
+    expect(error.status).toBeLessThan(500);
   });
 
   it("reports rate limiting (429) and bad requests (400) by code", async () => {
@@ -243,10 +356,10 @@ describe("apiRequest: API errors", () => {
     );
 
     const limited = await captureError(
-      apiRequest("POST", "/session", { body: {} }),
+      apiRequest("/session", { method: "POST", body: JSON.stringify({}) }),
     );
     const bad = await captureError(
-      apiRequest("GET", "/employees", { query: { sort: "salary" } }),
+      apiRequest("/employees", { query: { sort: "salary" } }),
     );
 
     expect([limited.status, limited.code]).toEqual([429, "rate_limited"]);
@@ -262,7 +375,7 @@ describe("apiRequest: transport failures", () => {
   it("maps a network failure to network_error with status 0", async () => {
     server.use(http.get("*/api/v1/health", () => HttpResponse.error()));
 
-    const error = await captureError(apiRequest("GET", "/health"));
+    const error = await captureError(apiRequest("/health"));
 
     expect([error.status, error.code]).toEqual([0, "network_error"]);
   });
@@ -274,10 +387,10 @@ describe("apiRequest: transport failures", () => {
       ),
     );
 
-    const error = await captureError(apiRequest("GET", "/employees"));
+    const error = await captureError(apiRequest("/employees"));
 
     expect([error.status, error.code]).toEqual([502, "unexpected_response"]);
-    expect(error.isClientError).toBe(false);
+    expect(error.status).toBeGreaterThanOrEqual(500);
   });
 
   it("rejects a successful response that is not JSON", async () => {
@@ -287,7 +400,7 @@ describe("apiRequest: transport failures", () => {
       ),
     );
 
-    const error = await captureError(apiRequest("GET", "/employees"));
+    const error = await captureError(apiRequest("/employees"));
 
     expect(error.code).toBe("unexpected_response");
   });
@@ -302,7 +415,7 @@ describe("apiRequest: cancellation", () => {
     controller.abort();
 
     await expect(
-      apiRequest("GET", "/employees", { signal: controller.signal }),
+      apiRequest("/employees", { signal: controller.signal }),
     ).rejects.toMatchObject({ name: "AbortError" });
   });
 });
@@ -325,13 +438,15 @@ describe("apiRequest: privacy", () => {
 
     const errors = [
       await captureError(
-        apiRequest("POST", "/session", {
-          body: { email: "hr@example.test", password: secret },
+        apiRequest("/session", {
+          method: "POST",
+          body: JSON.stringify({ email: "hr@example.test", password: secret }),
         }),
       ),
       await captureError(
-        apiRequest("POST", "/employees/1/salary_records", {
-          body: { salary_record: { amount: salary } },
+        apiRequest("/employees/1/salary_records", {
+          method: "POST",
+          body: JSON.stringify({ salary_record: { amount: salary } }),
         }),
       ),
     ];

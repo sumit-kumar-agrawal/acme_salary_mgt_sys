@@ -27,3 +27,6 @@ dist-ssr
 coverage
 playwright-report
 test-results
+
+# Playwright saved session (holds a live session cookie; never commit)
+playwright/.auth/

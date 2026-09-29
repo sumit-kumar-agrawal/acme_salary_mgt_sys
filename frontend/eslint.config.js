@@ -12,13 +12,7 @@ export default defineConfig([
   globalIgnores(["dist", "coverage", "playwright-report", "test-results"]),
   {
     files: ["**/*.{ts,tsx}"],
-    extends: [
-      js.configs.recommended,
-      tseslint.configs.recommendedTypeChecked,
-      reactHooks.configs.flat.recommended,
-      reactRefresh.configs.vite,
-      jsxA11y.flatConfigs.recommended,
-    ],
+    extends: [js.configs.recommended, tseslint.configs.recommendedTypeChecked],
     languageOptions: {
       globals: globals.browser,
       parserOptions: {
@@ -26,6 +20,20 @@ export default defineConfig([
         tsconfigRootDir: import.meta.dirname,
       },
     },
+  },
+  {
+    // React rules apply to the app only; e2e/ and config files are not React (Playwright's test.use is not a hook).
+    files: ["src/**/*.{ts,tsx}"],
+    extends: [
+      reactHooks.configs.flat.recommended,
+      reactRefresh.configs.vite,
+      jsxA11y.flatConfigs.recommended,
+    ],
+  },
+  {
+    // Fast refresh only matters for app code served by Vite; test support may mix helpers and components.
+    files: ["src/test/**/*.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
+    rules: { "react-refresh/only-export-components": "off" },
   },
   prettier,
 ]);

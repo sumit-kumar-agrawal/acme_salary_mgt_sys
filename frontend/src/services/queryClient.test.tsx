@@ -3,9 +3,9 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import type { ReactNode } from "react";
 import { describe, expect, it } from "vitest";
-import { apiRequest } from "@/api/client";
-import { ApiError } from "@/api/errors";
-import { createQueryClient, shouldRetryQuery } from "@/lib/queryClient";
+import { apiRequest } from "@/services/api";
+import { ApiError } from "@/services/api";
+import { createQueryClient, shouldRetryQuery } from "@/services/queryClient";
 import { server } from "@/test/server";
 
 // Q11: at most one retry, none for 4xx; no refetch on window focus; mutations never retry.
@@ -34,7 +34,7 @@ function renderProbeQuery() {
     () =>
       useQuery({
         queryKey: ["probe"],
-        queryFn: () => apiRequest("GET", "/probe"),
+        queryFn: () => apiRequest("/probe"),
         retryDelay: 0,
       }),
     { wrapper },
@@ -44,7 +44,7 @@ function renderProbeQuery() {
 describe("shouldRetryQuery", () => {
   it("never retries 4xx answers", () => {
     for (const status of [400, 401, 404, 422, 429]) {
-      expect(shouldRetryQuery(0, new ApiError(status, "x", "Failed."))).toBe(
+      expect(shouldRetryQuery(0, new ApiError("Failed.", status, "x"))).toBe(
         false,
       );
     }
@@ -52,8 +52,8 @@ describe("shouldRetryQuery", () => {
 
   it("retries server and network failures once", () => {
     for (const error of [
-      new ApiError(500, "internal_error", "Failed."),
-      new ApiError(0, "network_error", "Failed."),
+      new ApiError("Failed.", 500, "internal_error"),
+      new ApiError("Failed.", 0, "network_error"),
     ]) {
       expect(shouldRetryQuery(0, error)).toBe(true);
       expect(shouldRetryQuery(1, error)).toBe(false);

@@ -15,7 +15,7 @@
 
 ### Module workflow (every subphase from F2.2 on)
 There is no separate testing phase: each module is built, tested, and validated before it is marked Done.
-1. **Build:** the API functions the module needs (in `src/api/`), its query hooks, and its components or page.
+1. **Build:** the feature's API service (`src/services/<feature>Service.ts`), its query hooks, and its pages and components (`src/components/<feature>/`; reusable pieces in `src/components/common/`).
 2. **Test the module:**
    - **component and unit tests** (Vitest, React Testing Library, and MSW with synthetic data) covering the loading, empty, error, and success states, validation feedback, and the display rules;
    - **its Playwright journey** when the module completes a user journey, run against the real Rails API and development database (FD7).
@@ -145,28 +145,52 @@ Sign-out is in the navigation bar (`DELETE /session`).
 **Deliverables:** ADR 006 and the folder structure below.
 **Status:** Done (2026-09-29)
 
+**Structure (owner decision 2026-09-29, revised the same day; replaces the earlier `api/`/`auth/`/`features/`/`lib/` and `modules/` layouts):**
+
 ```
 frontend/
-  package.json, vite.config.ts (dev proxy /api → :3000), tsconfig.json, eslint.config.js, .nvmrc, index.html
+  package.json, vite.config.ts (dev proxy /api → Rails), tsconfig*.json, eslint.config.js, playwright.config.ts, .nvmrc, index.html
+  e2e/                      # Playwright journeys (+ support.ts, auth.setup.ts)
   src/
-    main.tsx, App.tsx       # providers (query client, auth), router
-    api/                    # the only code that calls fetch: client.ts, session, employees, salaryRecords, reference, analytics, reports, types.ts
-    auth/                   # AuthProvider (user + CSRF token in memory), useAuth, RequireAuth
-    components/             # shared, non-fetching UI: layout/, feedback/, table/, forms/, filters/, format/
-    features/               # pages and their hooks and area-specific components: auth/, employees/, salaries/, analytics/, reports/
-    lib/                    # money/date display helpers, URL filter helpers
-    test/                   # Vitest setup, MSW handlers and synthetic fixtures
-  e2e/                      # Playwright specs and setup
+    components/
+      common/               # reusable UI: ErrorAlert, LoadingState (later Pagination, DataTable, MoneyAmount, …)
+      auth/                 # sign-in page, AuthProvider, auth context
+      employees/            # employee list, detail, forms (F5)
+      salaries/             # salary history, change and correction dialogs (F6)
+      dashboard/            # compensation analytics dashboard (F7.1; Home placeholder in F3.2)
+      reports/              # salary report and CSV export (F7.2)
+    layouts/                # main layout, header, navbar, sidebar (F3.2)
+    routes/                 # app routes (F3.2)
+    hooks/                  # custom hooks: useAuth (now), useDocumentTitle (F3.2), …
+    services/
+      api.ts                # HTTP core: apiRequest(path, options), ApiError, in-memory CSRF token, envelope types
+      queryClient.ts        # TanStack Query defaults
+      authService.ts        # authService object (session endpoints) + auth.types.ts
+                            # later: employeeService.ts + employee.types.ts, salaryService, analyticsService, reportService, referenceService
+    test/                   # test-only support: MSW server and setup, render helper, fixtures (not app code; owner-approved 2026-09-29)
+    App.tsx, main.tsx, env.d.ts
 ```
 
-**Shared components** (`src/components/`, used more than once):
-- **Layout and auth:** `AppLayout`/`NavBar`, `PageHeader`, `RequireAuth`.
+- Tests are co-located with the code they test (`*.test.ts(x)`).
+- **Folders are created only when a feature needs them.** `layouts/` and `routes/` arrive in F3.2; `employees/`, `salaries/`, `dashboard/`, and `reports/` arrive in their own phases.
+
+**Restructure (2026-09-29, owner decisions, two steps):** the F2 and F3.1 code was moved without changing behaviour. Current locations:
+- HTTP core (`client`, `csrf`, `errors`, `types`) → one file, `src/services/api.ts`; `queryClient` → `src/services/queryClient.ts`;
+- `session.ts` → the `authService` object in `src/services/authService.ts`, with types in `src/services/auth.types.ts`;
+- sign-in page, `AuthProvider`, and auth context → `src/components/auth/`;
+- `useAuth` → `src/hooks/`;
+- `LoadingState` and `ErrorAlert` → `src/components/common/`.
+
+Completed-task records below keep the paths as written at the time.
+
+**Reusable components** (`src/components/common/`, used by more than one feature):
+- **Layout and routing** (not in `common/`): `MainLayout`, `Header`, `Sidebar` in `src/layouts/` (R9a); `AppRoutes`, `RequireAuth` in `src/routes/`. A `PageHeader` is added to `common/` only once more than one page needs it.
 - **Feedback:** `LoadingState`, `EmptyState`, `ErrorAlert`.
 - **Tables:** `Pagination`, `SortableHeader`.
 - **Filters and forms:** `SearchInput`, `CountrySelect`/`DepartmentSelect`/`EmploymentStatusSelect`/`CurrencySelect`, `FormField`.
 - **Display and dialogs:** `MoneyAmount`, `DateText`, `EmploymentStatusBadge`, `SalaryStatusBadge`, `ConfirmDialog`.
 
-**Area-specific components** (in `features/`): the currency summary cards, distribution chart, and breakdown table (analytics); the CSV download button (reports).
+**Feature components** (in `src/components/<feature>/`): the currency summary cards, distribution chart, and breakdown table (`dashboard/`); the CSV download button (`reports/`). The layout, header, and navigation live in `src/layouts/`.
 
 ### F1.3 Claude Code rules, skills, and project instructions
 **Deliverables:** the configuration in FD10.
@@ -324,21 +348,159 @@ Notes:
 ## Phase F3 — Authentication and app shell
 **Goal:** Secure sign-in and sign-out, protected navigation, and consistent handling of session expiry.
 
+### F3 review findings (2026-09-29)
+
+Inputs:
+- API spec v2.1 §4 (session), §10 (codes), §13 (client notes);
+- ADR 004 and the backend `SessionsController` / `Api::Authentication`;
+- ADR 006, FD6–FD13, and the F2 client (`apiRequest`, `setUnauthorizedHandler`, the CSRF store);
+- the React Router 7 and 8 releases and Playwright 1.63.
+
+No code written. Observed:
+- **Session contract:**
+  - `GET /session` → `{data: {authenticated, user: {email} | null, csrf_token}}`;
+  - `POST /session` takes an **unwrapped** `{email, password}` (the backend reads `params[:email]`; `wrap_parameters false`) and needs `X-CSRF-Token`; success `200` returns a **new** token, because the session is reset at sign-in;
+  - failures: `401 invalid_credentials` (same for an unknown email or a wrong password) and `429 rate_limited` (5 per minute per IP);
+  - `DELETE /session` → `204` and resets the session, so the old token is dead and a fresh `GET /session` is needed before the next sign-in.
+- **Expiry:** after 30 minutes idle or 8 hours total, the next request returns `401 unauthenticated`. Every signed-in request, `GET /session` included, refreshes the idle timer (7.1 F4).
+- **React Router:** 7.18.4 (dist-tag `version-7`) and 8.4.0 (`latest`, first released 2026-06-17) were both published on 2026-09-15. React Router 8 needs Node ≥22.22 (now met: 22.23.3) and React ≥19.2.7 (19.3 installed).
+  - The 8.0 changelog (read from the package tarball) removes only data/framework-mode flags and APIs (future flags, middleware, `meta` `data`, `hasErrorBoundary`) and the `react-router-dom` package.
+  - **Declarative mode is unaffected:** `BrowserRouter`, `MemoryRouter`, `Routes`, `Route`, `Navigate`, `Outlet`, `Link`, `NavLink`, `useNavigate`, `useLocation`, and `useSearchParams` are all exported by 8.4.0 (checked in the tarball).
+- **Components:** F3 needs a loading state and an error alert (session bootstrap, sign-in errors) before F4.1, which plans them.
+- **E2E credentials:** Playwright needs an HR login. Claude does not have the owner's password (FD7 passes it at run time), so Claude's own E2E runs need another way in.
+- **Error boundaries:** React still requires a class component for them (there is no hook). This is the one exception to "functional components".
+
+#### A. Missing decisions
+
+**Owner decisions (2026-09-29):** R1–R15 approved as recommended (React Router 8.4, the R5 client retry, the R12 Chromium download, the R13 temporary dev user for Claude's E2E runs).
+
+| ID | Decision | Recommendation | Needed by |
+|---|---|---|---|
+| R1 | **React Router version.** | **8.4** in declarative mode, imported from `react-router` (the only package in v8). It is current, supports our Node and React, and none of its breaking changes touch declarative APIs. Amend ADR 006 (it said 7.x). The alternative is 7.18: equally maintained today, but it will age out first | F3.2 |
+| R2 | **Session API and state.** *(Current files after the 2026-09-29 restructure: `src/services/authService.ts` (an `authService` object; `signIn({ email, password })`) with `src/services/auth.types.ts`; the provider and context in `src/components/auth/`; `useAuth` in `src/hooks/`.)* | **`src/api/session.ts`:** `getSession()`, `signIn(email, password)` (unwrapped body), `signOut()`, and a `Session` type. **`src/auth/AuthProvider.tsx`** (React Context, FD13): <br>- reads the session through a TanStack Query (`["session"]`, `staleTime: Infinity`); the query function stores `csrf_token` in the in-memory store; <br>- exposes `status` (`loading` / `signedIn` / `signedOut`), `user` (email only), `signIn`, `signOut`, and a one-off `notice` (`expired` / `signedOut`). <br>Passwords never enter context, the cache, or storage | F3.1 |
+| R3 | **Startup.** | Until the first `GET /session` resolves, show a full-page loading state. If it fails (network error or `5xx`), show an error with **Retry**, not the sign-in page, so that "API down" is not confused with "signed out" | F3.1 |
+| R4 | **Token lifecycle.** | `GET /session` sets the token. A successful sign-in **replaces** it with the returned token. After sign-out or expiry, the token is cleared and `GET /session` is fetched again for a fresh anonymous token, so signing in again works without a page reload | F3.1 |
+| R5 | **Automatic recovery from `invalid_csrf_token`** (API §13: fetch a new token). | Add a hook to the F2 client (`setCsrfRefresher`). On `422 invalid_csrf_token` for a write, the client fetches `GET /session` once, stores the new token, and **retries the request once**; a second failure is surfaced. This is safe because Rails rejects the request before the action runs. The retry is bounded to one, so it can't loop. This is a small F2 client change with its own tests | F3.1 |
+| R6 | **What signing out clears.** | On `401 unauthenticated` (the F2 handler) or sign-out: `queryClient.clear()` removes **all cached employee and salary data** from memory, the token is cleared, the session is fetched again, and the user goes to `/sign-in` with a notice: "Your session has expired. Please sign in again." or "You have signed out." | F3.1 |
+| R7 | **Return to the requested page after sign-in.** | `RequireAuth` redirects to `/sign-in` with `state.from` = the requested path and search (which never contains `q`, FD6b). After sign-in, go there **only if it is an internal path** (starts with `/`, not `//`), which prevents open redirects; otherwise go to `/`. An already signed-in user who opens `/sign-in` is redirected to `/` | F3.1 / F3.2 |
+| R8 | **Sign-in form.** | <br>- **Fields:** email (`type="email"`, `autocomplete="username"`) and password (`autocomplete="current-password"`), labelled, with required checks only. <br>- **While submitting:** the button is disabled and shows "Signing in…". <br>- **Errors:** `invalid_credentials` → the API's generic message; `rate_limited` → "Too many sign-in attempts. Wait a minute and try again."; network → a generic message. <br>- **Privacy:** the password is cleared after a failure and never logged | F3.1 |
+| R9 | **Routes in F3.2.** | <br>- `/sign-in` (public); <br>- a protected layout route with `/` (a **Home placeholder** linking to the areas built so far; F5.1 turns it into a redirect to `/employees`) and `*` (not found). <br>The navigation bar shows only areas that exist (no dead links) and the signed-in email with a **Sign out** button | F3.2 |
+| R9a | **Layout (owner decision 2026-09-29, amends R9's top navigation bar).** | **Option (b):** <br>- `src/layouts/MainLayout.tsx`: page frame with the skip link and `<main id="main">`; <br>- `src/layouts/Header.tsx`: app name, the signed-in email, **Sign out**, and on small screens a button that opens the sidebar; <br>- `src/layouts/Sidebar.tsx`: feature navigation (`NavLink`, `aria-current`), showing only built areas. It is a fixed column on large screens and a react-bootstrap `Offcanvas` (keyboard- and screen-reader-accessible) on small screens. <br>No separate `Navbar.tsx`: the header and sidebar cover it ("only files that are needed") | F3.2 |
+| R10 | **Error boundary.** | A small class component (React requires one; the documented exception to the functional-components rule), with no new dependency. It shows a generic message and a **Reload** button. It never logs payloads, only the error name, and only in development | F3.2 |
+| R11 | **Accessibility baseline in the shell.** | A "Skip to main content" link; one `<main id="main">`; a document title per page (a small `useDocumentTitle` hook); `NavLink` active state with `aria-current` | F3.2 |
+| R12 | **Playwright setup (F3.1).** | <br>- **Install:** `@playwright/test` 1.63, **Chromium only** (`npx playwright install chromium` downloads the browser to the user cache, outside the repo). <br>- **Config:** `baseURL` `http://localhost:5173` (`E2E_BASE_URL` overrides it). The `webServer` starts Vite (`npm run dev`, reusing a running one). Playwright does **not** start Rails: it tests the real backend that is already running (FD7; `VITE_PROXY_TARGET` for another port). <br>- **One sign-in per run:** a setup project signs in once through the UI and saves `storageState` to `playwright/.auth/`, which is **git-ignored** because it holds a live session cookie. <br>- Specs live in `e2e/`; the command is `npm run e2e` | F3.1 |
+| R13 | **Credentials for Claude's E2E runs.** | Same pattern as backend 6.2 N9 b: Claude creates a **temporary user** (`e2e-runner@example.test`, random password in environment variables only) in the dev DB before its run and deletes it afterwards, checking `User.count` before and after. The owner runs with their own credentials. Each run uses at most **3 sign-ins** (setup, the sign-in journey, wrong password), under the 5-per-minute limit; back-to-back runs within a minute may get `429`, so Claude waits between runs | F3.1 |
+| R14 | **Tests for F3** (module workflow). | **Component tests** (MSW, `MemoryRouter`): <br>- AuthProvider: loading, signed in and out, token replacement, the R5 refresh-and-retry, the R6 cache clear and notice; <br>- sign-in page messages (`401`, `429`, network) and the R7 return path, including rejecting an external `from`; <br>- `RequireAuth` redirect; nav links and sign-out; not found; the error boundary. <br>**E2E:** <br>- sign in → see the app → sign out; <br>- wrong password → generic error; <br>- opening a protected URL while signed out → sign-in → back to that URL. <br>Queries by role and label, not test IDs | F3.1 / F3.2 |
+| R15 | **Bring two F4.1 components forward.** | Add minimal `LoadingState` and `ErrorAlert` (maps an `ApiError` to a safe message) to `src/components/feedback/` in F3.1. F4.1 extends them instead of recreating them | F3.1 |
+
+#### B. Assumptions
+- **No backend change.** The dev DB already has the owner's HR user; Rails runs on `:3000` for the owner (Claude uses spare ports).
+- The Vite proxy keeps `changeOrigin: false` (Q1); F2.1 verified a CSRF-checked write through it.
+- F3 builds only the shell and authentication. The pages for employees, analytics, and reports come in F5–F7 and appear in the navigation when they exist.
+
+#### C. Dependencies
+
+| Dependency | Blocks | Owner |
+|---|---|---|
+| ~~Approval of R1–R15~~ Approved 2026-09-29 | F3.1 | Project owner |
+| Network access for `npm install` and the Chromium download | F3.1, F3.2 | Approved (FD12) |
+| The owner's HR credentials as `E2E_HR_EMAIL`/`E2E_HR_PASSWORD` when **the owner** runs `npm run e2e` | Owner's runs | Project owner |
+| Commit of the F2 work | F3.1 (clean starting point) | Project owner |
+
+#### D. Risks
+
+| Risk | Likelihood / impact | Mitigation |
+|---|---|---|
+| Cached salary data stays in memory after sign-out or expiry | Medium / High | R6 `queryClient.clear()`, with a test |
+| Open redirect through the sign-in return path | Low / Medium | R7 internal-path check, with a test for an external `from` |
+| A token-refresh loop on repeated `invalid_csrf_token` | Low / Medium | R5 bounded to one refresh and one retry, with a test |
+| E2E runs hit the `429` sign-in limit | Medium / Low | R12 one sign-in per run; R13 at most 3 attempts and waits between runs |
+| The saved session file (`storageState`) is committed | Low / High | R12 `playwright/.auth/` in `.gitignore`, checked with `git check-ignore` |
+| React Router 8 behaves differently from what Claude expects | Low / Medium | Declarative mode only; the API was checked in the tarball; typecheck, component tests, and E2E prove it |
+| "API down" is shown as "signed out" | Medium / Medium | R3 separate startup error with Retry |
+| Flaky E2E timing | Medium / Low | Playwright's auto-waiting assertions; no fixed sleeps |
+
 ### F3.1 Session, sign-in, and sign-out
-**Prompt:** `Session API functions, AuthProvider (React Context: user + CSRF token in memory; token replaced after sign-in), sign-in page (generic failure, 429 message), sign-out, and 401 → return to sign-in with a message. Set up Playwright (config, npm run e2e, global sign-in with storageState, credentials from E2E_HR_EMAIL/E2E_HR_PASSWORD) against the real Rails API (FD7) with this module's journey: sign in → see the app → sign out, plus wrong password.`
-**Tests and validation:**
-- component tests: sign-in form, generic error, `429`, token replacement, `401` handling;
-- E2E: the sign-in journey;
-- manual check against the dev API.
-**Status:** Not Started
+**Prompt:** `Per R2–R8 and R12–R15: session API module; AuthProvider (React Context + TanStack Query, in-memory token, R4 lifecycle, R6 cache clear and notices); the R5 CSRF refresh-and-retry in the F2 client; sign-in page (R8) with the R7 return path; startup loading and error states (R3); LoadingState and ErrorAlert (R15); Playwright (R12) with this module's journeys. Module workflow: component tests (MSW), E2E, validate, record.`
+**Tasks:**
+1. ~~Owner: approve R1–R15.~~ Approved 2026-09-29.
+2. ~~`src/api/session.ts` and the R5 `setCsrfRefresher` hook in `src/api/client.ts`, with tests.~~ Done 2026-09-29.
+3. ~~`LoadingState` and `ErrorAlert` (R15), with tests.~~ Done 2026-09-29, plus a `userMessage()` helper in `src/api/errors.ts` (API message for 4xx; generic text for 5xx and unknown errors).
+4. ~~`src/auth/AuthProvider.tsx`, `useAuth.ts` (R2–R4, R6), with tests.~~ Done 2026-09-29 (context and key in `authContext.ts`).
+5. ~~`src/features/auth/SignInPage.tsx` (R8), with tests; a minimal route setup.~~ Done 2026-09-29. Without a router yet, `App.tsx` chooses the screen from the session status (loading, startup error with Retry, sign-in, signed-in view). **The R7 return-path check moves to F3.2**, where the router and `RequireAuth` arrive.
+6. ~~Playwright (R12).~~ Done 2026-09-29: `@playwright/test` 1.63.0 plus Chromium; `playwright.config.ts` (the port comes from `E2E_BASE_URL`; Vite only, never Rails); `e2e/support.ts`, `e2e/auth.setup.ts`, `e2e/auth.spec.ts`; `playwright/.auth/` git-ignored; `npm run e2e`.
+7. ~~Validation.~~ Done 2026-09-29; see the status.
+8. ~~Record.~~ Done 2026-09-29 (this entry; ADR 006 end-to-end row).
+
+**Acceptance:**
+- Sign-in, sign-out, and expiry work against the real API.
+- The token is replaced after sign-in and recovered after `invalid_csrf_token`.
+- Cached data is cleared on sign-out and expiry.
+- All component tests and the E2E journeys pass; lint, typecheck, and build are clean.
+**Status:** Done (2026-09-29).
+- **Checks under Node 22.23.3:** `npm run format`, `typecheck`, `lint` (zero warnings), `test` (**6 files, 44 tests**), and `build` all exit 0. JS bundle 285.5 kB (89.2 kB gzip).
+- **E2E against the real API** (Claude's Rails on :3116 with the dev database, Vite on :5182, R13 temporary user `e2e-runner@example.test`): `npm run e2e` → **4 passed** in 7.5 s:
+  - setup (sign in once and save the session);
+  - the saved session opens the app;
+  - sign in → app → sign out;
+  - a wrong password → the generic error, with the password cleared.
+  - **3 sign-ins** in total.
+- **Visual check** (Playwright screenshots, reviewed):
+  - the startup loading state (centred spinner);
+  - the sign-in page (centred card, labelled fields, full-width button);
+  - the signed-in view (heading, email, Sign out).
+- **Mutation check:** with cache clearing disabled in `AuthProvider`, both the sign-out and expiry tests fail; restored.
+- **Temporary user:** `User.count` was 1 before and 2 during. The script's cleanup trap **hung** (its exit trap never finished the Rails step), so Claude stopped the stuck processes and deleted the user by hand: **deleted=1, `User.count` = 1**, the user is gone, the saved-session file is removed, and ports 3116, 5182, and 5183 are free.
+
+Notes:
+- **Accessibility fix found by a test:** react-bootstrap's `isInvalid` only adds a CSS class, so the sign-in fields now set `aria-invalid` explicitly. Screen readers are told a field is invalid.
+- **Test fake for the session endpoints** (`src/test/fixtures/sessionBackend.ts`): stateful, and, like Rails, it issues a new token on every session response and rejects writes with a stale token. This lets token replacement, R5 recovery, sign-out, and expiry be tested realistically.
+- **Sign-out clears local state even if `DELETE /session` fails** (e.g. network). Nothing stays on screen or in memory, and the server session expires on its own.
+- **Lint scope:** React-specific rules (hooks, react-refresh, jsx-a11y) now apply to `src/` only; `e2e/` and config files keep the TypeScript rules.
+- **For the owner's runs:** start Rails, then run `E2E_HR_EMAIL=<email> E2E_HR_PASSWORD=<password> npm run e2e` in `frontend/`. Wait a minute between back-to-back runs (3 sign-ins per run, limit 5 per minute).
 
 ### F3.2 Layout, navigation, and routing
-**Prompt:** `AppLayout/NavBar, React Router routes from F1.1, RequireAuth, not-found page, and an error boundary with a generic message.`
-**Tests and validation:**
-- component tests: redirect when signed out, navigation links, not-found page, error boundary;
-- E2E: a protected URL redirects to sign-in and returns after sign-in;
-- manual check.
-**Status:** Not Started
+**Prompt:** `Per R1, R7, R9–R11, R14: install React Router 8.4; BrowserRouter with the F1.1 routes that exist now (sign-in, Home placeholder, not found) in src/routes; RequireAuth; MainLayout + Header + Sidebar in src/layouts (R9a: sidebar navigation with built areas only, offcanvas on small screens; header with user email and sign out); error boundary (class component); skip link, main landmark, document titles. Module workflow: component tests, E2E (protected URL → sign-in → return), validate, record.`
+**Tasks:**
+1. ~~Install `react-router` 8.4 (R1); amend ADR 006.~~ Done 2026-09-29 (8.4.0, 0 vulnerabilities).
+2. ~~Routes, layout, pages, error boundary, title hook.~~ Done 2026-09-29:
+   - `src/routes/AppRoutes.tsx`, `RequireAuth.tsx`, and `returnPath.ts` (the R7 internal-path check);
+   - `src/layouts/MainLayout.tsx`, `Header.tsx`, `Sidebar.tsx` (R9a; a responsive `Offcanvas` at the `lg` breakpoint);
+   - `src/components/dashboard/HomePage.tsx`;
+   - `src/components/common/NotFoundPage.tsx`, `ErrorBoundary.tsx`, `reportRenderError.ts`;
+   - `src/hooks/useDocumentTitle.ts`;
+   - `BrowserRouter` in `main.tsx`. `App.tsx` gates routing on the startup session state (R3); `SignInPage` redirects signed-in users to the safe return path.
+3. ~~Tests.~~ Done 2026-09-29: `routes/returnPath.test.ts`, `routes/routing.test.tsx`, `layouts/MainLayout.test.tsx`, plus the NotFound, ErrorBoundary, and reporter tests in `components/common/common.test.tsx`. `src/test/render.tsx` gained a `MemoryRouter` (`route` option) and `currentLocation()`; `src/test/screenSize.ts` stubs `matchMedia`.
+4. ~~E2E.~~ Done 2026-09-29: `e2e/navigation.spec.ts` (unknown URL → not found → sidebar Home; protected URL signed out → sign-in → back to the same URL).
+5. ~~Validation.~~ Done 2026-09-29; see the status.
+6. ~~Record.~~ Done 2026-09-29.
+
+**Acceptance:** Only signed-in users reach app pages; navigation, not-found, and error boundary behave as specified; all tests and E2E pass.
+**Status:** Done (2026-09-29).
+- **Checks under Node 22.23.3:** `npm run format`, `typecheck`, `lint` (zero warnings), `test` (**9 files, 60 tests**), and `build` all exit 0. JS bundle 344.9 kB (108.9 kB gzip), adding React Router and the react-bootstrap `Offcanvas`.
+- **E2E against the real API** (Claude's Rails on :3119, Vite on :5185, R13 temporary user): **6 passed** in 4.5 s, with 4 sign-ins in the run:
+  - setup; saved session;
+  - sign in → sign out; wrong password;
+  - unknown URL → not found → sidebar Home;
+  - protected URL → sign-in → the same URL.
+- **Cleanup in explicit steps, verified:** deleted=1, `User.count` = 1, no saved-session file, ports free.
+- **Mutation check:** with the open-redirect guard disabled, the unit test and "ignores an external return path" fail; restored.
+- **Visual check** (throwaway Playwright script, screenshots reviewed):
+  - desktop 1280×720: dark header with brand, email, and Sign out; static sidebar; Home;
+  - phone 390×780: Menu button, email hidden; Menu opens the "Navigation" offcanvas with a close button.
+  - The active link had no visual highlight, so the sidebar now uses the `pills` variant. That change was re-validated by tests but not re-screenshotted.
+
+Notes:
+- **Security finding (fixed):** React 19's default `onCaughtError` calls `console.error(error)`, even in production (checked in `react-dom-client.production.js`), which would print error messages to the console. `main.tsx` now sets `onCaughtError`/`onUncaughtError`/`onRecoverableError` to `reportRenderError` (name only), and `ErrorBoundary` no longer logs itself.
+- **Accessibility finding (fixed):** react-bootstrap's `Navbar` adds `role="navigation"` when it isn't rendered as `<nav>`, so the header would have been a second, unlabelled navigation landmark. `Header` is now a plain `<header>` (banner) with Bootstrap navbar classes.
+- **jsdom has no `matchMedia`,** which the responsive `Offcanvas` needs. `src/test/screenSize.ts` stubs it: "large" by default, "small" for the menu test.
+- **Lint:** the fast-refresh rule is off for `src/test/**` and `*.test.tsx` only (test support mixes helpers and components).
+- **After explicit sign-out,** `RequireAuth` records the current page, so signing in again returns there (the same as after expiry).
+
+**F3 gate: passed on 2026-09-29.**
+- Only signed-in users reach app pages (the route walk in the component tests; E2E protected URL → sign-in).
+- Sign-in, sign-out, expiry, and CSRF recovery work end to end against the real API (F3.1).
+- Routing, layout, not-found, and the error boundary behave as specified (F3.2).
 
 **Phase gate:** Only signed-in users reach app pages; expiry and sign-out work end to end.
 
@@ -348,7 +510,7 @@ Notes:
 **Goal:** Reusable, accessible building blocks, each tested as it is built.
 
 ### F4.1 States, tables, and filters
-**Prompt:** `LoadingState, EmptyState, ErrorAlert, Pagination (API meta), SortableHeader, SearchInput, and reference-data selects (countries, departments, statuses, currencies; reference API functions) with URL-synced filter helpers (FD6b, q excluded).`
+**Prompt:** `LoadingState, EmptyState, ErrorAlert, Pagination (API meta), SortableHeader, SearchInput, and reference-data selects (countries, departments, statuses, currencies) in src/components/common/; referenceService + reference.types.ts in src/services/; URL-synced filter helpers as a shared hook in src/hooks/ (FD6b, q excluded).`
 **Tests and validation:**
 - component tests for each component: states, keyboard use and labels, pagination edges, `q` not written to the URL;
 - lint, typecheck, and test.
@@ -369,7 +531,7 @@ Notes:
 **Goal:** Search, view, create, and update employees (FR-01, FR-04).
 
 ### F5.1 Employee list
-**Prompt:** `Employees API functions and page: q search, country/department/status filters, allowlisted sort, pagination (URL state except q), links to detail and to the salary report (G1); loading, empty, and error states.`
+**Prompt:** `employeeService + employee.types.ts (src/services/) and the employees page (src/components/employees/): q search, country/department/status filters, allowlisted sort, pagination (URL state except q), links to detail and to the salary report (G1); loading, empty, and error states.`
 **Tests and validation:**
 - component tests (MSW): filters, sort, pagination, empty result, `400` handling, no salary or email shown;
 - E2E: search and filter, then open an employee;
@@ -400,7 +562,7 @@ Notes:
 **Goal:** View history and record changes without losing it (FR-02, FR-03).
 
 ### F6.1 History view
-**Prompt:** `Salary records API functions and history table (newest first) using the API's status and editable flags and money per currency.`
+**Prompt:** `salaryService + salary.types.ts (src/services/) and the history table (src/components/salaries/) (newest first) using the API's status and editable flags and money per currency.`
 **Tests and validation:**
 - component tests: current, scheduled, and historical rows; mixed currencies; empty history;
 - manual check.
@@ -422,7 +584,7 @@ Notes:
 **Goal:** Currency-safe compensation insight and exportable reports (FR-04 to FR-06).
 
 ### F7.1 Analytics dashboard
-**Prompt:** `Analytics API functions and page: filters (as_of, country, department, status), per-currency summary cards, a distribution chart per currency (10 bands), and a breakdown table by country or department. No cross-currency totals.`
+**Prompt:** `analyticsService + analytics.types.ts (src/services/) and the dashboard page (src/components/dashboard/): filters (as_of, country, department, status), per-currency summary cards, a distribution chart per currency (10 bands), and a breakdown table by country or department. No cross-currency totals.`
 **Tests and validation:**
 - component tests: one card per currency with no grand total, filter changes, empty result, chart given only the band counts;
 - E2E: filter analytics by country;
@@ -430,7 +592,7 @@ Notes:
 **Status:** Not Started
 
 ### F7.2 Salary report and CSV export
-**Prompt:** `Report API functions and page: shared filters plus q, sort, and pagination; CSV export via fetch that saves the file or shows 422 export_too_large (G6).`
+**Prompt:** `reportService + report.types.ts (src/services/) and the salary report page (src/components/reports/): shared filters plus q, sort, and pagination; CSV export via fetch that saves the file or shows 422 export_too_large (G6).`
 **Tests and validation:**
 - component tests: sort by amount grouped by currency, pagination, export success, and the export-too-large message;
 - E2E: filter the report and download the CSV;
@@ -493,8 +655,20 @@ Notes:
 | 2026-09-29 | F2 (Q decisions) | Owner approved Q2–Q12 (Q1 already confirmed); F1 gate passed | Plan update only | — |
 | 2026-09-29 | F2.1 | Scaffolded `frontend/` (create-vite react-ts with ESLint), pinned the Q2 set, strict TypeScript and the `@/` alias, ESLint (type-checked, react-hooks, react-refresh, jsx-a11y) and Prettier defaults, Bootstrap, the `/api` proxy with `changeOrigin: false` and `VITE_PROXY_TARGET`, Vitest + jsdom + RTL + MSW setup with a smoke test, `.env.example`, `.nvmrc`. ADR 006 version table amended. Owner installed Node 22.23.3 through nvm (jsdom 30 needs ≥22.22.2) | Node 22.23.3: install 0 vulnerabilities; format, typecheck, lint, test (1/1), and build exit 0; lint probe proves the rules fire; proxy health `200` and proxied CSRF write `401` (not `422`) with Rails :3115 and Vite :5180, both stopped | Review missed jsdom's Node requirement (recorded). MSW 3 `onUnhandledFrame`. React Router 7 vs 8 to decide in F3.2 |
 | 2026-09-29 | F2.2 | API client module: `src/api/client.ts` (`apiRequest`, `buildUrl`, unauthorized handler), `csrf.ts` (in-memory token), `errors.ts` (`ApiError`), `types.ts` (envelope, pagination), `src/env.d.ts`; `src/lib/queryClient.ts` (Q11) with the provider in `main.tsx`; `@tanstack/react-query` 5.104.0 installed. 20 new tests (MSW). F2 gate passed | `npm run format`, `typecheck`, `lint`, `test` (3 files, 21 tests), and `build` exit 0; 2 mutation checks caught by the intended tests; the abort test found and fixed a cross-realm `instanceof DOMException` bug | Manual check deferred to F3.1 (no UI calls the client yet) |
+| 2026-09-29 | F3 (review) | Reviewed F3 against API §4/§10/§13, ADR 004 and the backend session code, ADR 006, FD6–FD13, the F2 client, React Router 7.18/8.4 (8.0 changelog and exports read from the tarball), and Playwright 1.63. Recorded R1–R15, assumptions, dependencies, and risks; expanded F3.1 and F3.2 into tasks. Key points: React Router 8.4 in declarative mode (none of its breaking changes apply); `POST /session` is unwrapped and returns a new token; `DELETE /session` kills the token; bounded CSRF refresh and retry; clear the query cache on sign-out and expiry; internal-only return path; temporary dev user for Claude's E2E runs; LoadingState and ErrorAlert brought forward from F4.1 | Read-only: npm registry (dist-tags, release dates, peers), React Router 8.4.0 tarball changelog and exports (scratch copy deleted). No code written | Owner: approve R1–R15 |
+| 2026-09-29 | F3 (R decisions) | Owner approved R1–R15 as recommended | Plan update only | — |
+| 2026-09-29 | F3.1 | Session module (`api/session.ts`), R5 CSRF refresh-and-retry in the client, `userMessage()`, `LoadingState`/`ErrorAlert`, `AuthProvider`/`useAuth`/`authContext` (R2–R4, R6), `SignInPage` (R8), interim `App` screen switch (R3), test helpers (`render.tsx`, stateful `sessionBackend` fake), Playwright 1.63 plus Chromium with the setup project and 3 journeys. R7 return path moved to F3.2 (needs the router) | format, typecheck, lint, test (6 files, 44 tests), and build exit 0; E2E 4/4 against the real API (temporary user); screenshots reviewed; R6 mutation caught | The E2E script's cleanup trap hung, and the temporary user was deleted manually (verified `User.count` = 1). Future runs clean up in explicit steps |
+| 2026-09-29 | Structure | Owner decision: feature-based `src/` (components, layouts, modules/{auth,dashboard,employees,salaries,reports}, services, hooks, routes). Moved the F2 and F3.1 code (`api/`, `lib/` → `services/`; `auth/`, `features/auth/` → `modules/auth/`; `components/feedback/` → `components/`), rewrote imports, and updated F1.2, the module workflow, F3.2 tasks, ADR 006, `.claude/rules/frontend/{components,api-integration}.md`, and the react-frontend skill. `layouts/`, `hooks/`, `routes/`, and the other modules are created when a real feature needs them. `src/test/` kept for test-only support | format, typecheck, lint, test (6 files, 44 tests, unchanged), and build exit 0. E2E not re-run (move-only change; no behaviour change) | Owner: confirm `src/test/` as the test-support location |
+| 2026-09-29 | Structure (revised) | Owner decision: no `modules/` folder. Feature folders under `src/components/` (`login` now; `employees`, `salaries`, `dashboard`, `reports` later) next to `components/common/` (reusable UI); `services/api/` HTTP core plus `services/authService.ts` (was `session.ts`); `hooks/useAuth.ts`; `layouts/` and `routes/` in F3.2. Moved files, rewrote imports (`sessionApi` → `authService`), and updated F1.2, the module workflow, F3.2 tasks, ADR 006, frontend rules, and the skill | format, typecheck, lint, test (6 files, 44 tests, unchanged), and build exit 0 | F3.2 layout set (header/navbar/sidebar) to confirm with the owner at F3.2 start |
+| 2026-09-29 | F3 (R9a) | Owner chose layout option (b): `MainLayout` + `Header` (email, sign out, small-screen menu button) + `Sidebar` (feature navigation, offcanvas on small screens); no separate `Navbar`. R9a recorded; F3.2 prompt, tasks, and tests updated | Plan update only | — |
+| 2026-09-29 | Structure (auth folder) | Owner decision: feature folders stay under `src/components/` (`common`, `auth`, `employees`, `salaries`, `dashboard`, `reports`), each holding its own files. Renamed `components/login/` → `components/auth/`; imports, rules, skill, ADR 006, and plan updated | format, typecheck, lint, test (6 files, 44 tests), and build exit 0 | — |
+| 2026-09-29 | Structure (src/test) | Owner confirmed `src/test/` as the location for test-only support | Plan update only | — |
+| 2026-09-29 | Services refactor | Owner samples: simpler services. Merged `services/api/{client,csrf,errors,types}` into `services/api.ts` (`apiRequest(path, options)` with `RequestInit` + `query`; `ApiError(message, status, code, details)` in the sample's order); `queryClient.ts` moved up; `authService` became an object (`getSession`, `signIn(credentials)`, `signOut`) with `auth.types.ts` (`User`, `SignInCredentials`, `Session`). **Kept from our contract** (the samples would break against this API): the `X-CSRF-Token` header, envelope parsing with `code`/`details` (`body.error` is an object), `{data: …}` responses, short paths under the base path (no `/api/v1` doubling), `credentials: same-origin`, the `401` handler, the R5 CSRF refresh/retry, abort and network handling, and `204`. Base path read at call time (testable override). Rules, skill, ADR 006, and plan updated | format, typecheck, lint, test (6 files, 44 tests), and build exit 0; **E2E 4/4 against the real API** (temporary user; cleanup in explicit steps, verified `User.count` = 1, ports free, auth file removed) | — |
+| 2026-09-29 | Plan alignment | Updated the remaining current and future text to the new structure: the F1.2 reusable-components list (layout and routing in `layouts/` and `routes/`; `PageHeader` only when needed), and the F4.1, F5.1, F6.1, F7.1, and F7.2 prompts (service object + types file in `src/services/`, pages in `src/components/<feature>/`, the filter helper as a shared hook in `src/hooks/`). R2 gained a pointer to the current files. Decision records (Q6, Q10, F2.2 prompt) kept as history | Documentation only; no code changes | — |
+| 2026-09-29 | F3.2 | React Router 8.4.0; `routes/` (AppRoutes, RequireAuth, returnPath with the R7 guard), `layouts/` (MainLayout, Header, responsive Sidebar per R9a), `components/dashboard/HomePage`, `components/common/` (NotFoundPage, ErrorBoundary, reportRenderError), `hooks/useDocumentTitle`; `BrowserRouter` and root error handlers in `main.tsx`; `SignInPage` return path. Test support: `MemoryRouter` in `render.tsx`, `screenSize.ts` (`matchMedia`). E2E `navigation.spec.ts`. F3 gate passed | format, typecheck, lint, test (9 files, 60 tests), and build exit 0; E2E 6/6 against the real API (temporary user, cleanup verified); open-redirect mutation caught; desktop and phone screenshots reviewed | Fixed along the way: React 19 logs full render errors by default (now name only); react-bootstrap `Navbar` role clash (plain `<header>`); unhighlighted active sidebar link (`pills`) |
 
 ## Current progress
 - **F1** — Frontend design and decisions — **Done (gate passed 2026-09-29)**
 - **F2** — Foundation — **Done (gate passed 2026-09-29)**. F2.1, F2.2 Done.
-- **Next:** F3 review (authentication and app shell), then F3.1
+- **F3** — Authentication and app shell — **Done (gate passed 2026-09-29)**. F3.1, F3.2 Done.
+- **Next:** F4 review (shared components), then F4.1

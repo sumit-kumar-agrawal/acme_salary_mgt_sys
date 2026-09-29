@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { isApiError } from "@/api/errors";
+import { isApiError } from "@/services/api";
 
 // TanStack Query defaults (FRONTEND_PLAN.md Q11, FD13).
 
@@ -10,7 +10,9 @@ export function shouldRetryQuery(
   failureCount: number,
   error: unknown,
 ): boolean {
-  if (isApiError(error) && error.isClientError) return false;
+  // 4xx answers are final; retrying them does not help.
+  if (isApiError(error) && error.status >= 400 && error.status < 500)
+    return false;
   return failureCount < MAX_QUERY_RETRIES;
 }
 
