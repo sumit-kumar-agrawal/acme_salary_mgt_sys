@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_28_100006) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_29_100001) do
   create_table "countries", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
     t.string "code", limit: 2, null: false
     t.string "name", limit: 100, null: false
@@ -47,10 +47,13 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_28_100006) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["country_id"], name: "index_employees_on_country_id"
+    t.index ["created_at"], name: "index_employees_on_created_at"
     t.index ["department_id"], name: "index_employees_on_department_id"
     t.index ["email"], name: "index_employees_on_email", unique: true
     t.index ["employee_number"], name: "index_employees_on_employee_number", unique: true
+    t.index ["employment_status", "country_id"], name: "index_employees_on_employment_status_and_country_id"
     t.index ["employment_status"], name: "index_employees_on_employment_status"
+    t.index ["hired_on"], name: "index_employees_on_hired_on"
     t.index ["last_name", "first_name"], name: "index_employees_on_last_name_and_first_name"
     t.check_constraint "`employment_status` in (_utf8mb4'active',_utf8mb4'on_leave',_utf8mb4'terminated')", name: "employees_employment_status_valid"
   end

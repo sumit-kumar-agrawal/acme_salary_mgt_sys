@@ -1,7 +1,7 @@
 # Salary Management System — Database Design
 
 **Status:** Approved design for migrations (BACKEND_PLAN.md task 1.3)  
-**Version:** 2.0 (2026-09-28)  
+**Version:** 2.1 (2026-09-29: §4 indexes and §13 measurements from BACKEND_PLAN.md 6.2)  
 **Engine:** MySQL 8.0.16+ (8.4 locally), InnoDB, `utf8mb4` / `utf8mb4_unicode_ci` (as generated in `backend/config/database.yml`)  
 **Databases:** `salary_management` (development; the name comes from `DB_NAME`) and `salary_management_test`. In development, the Rails 8 Solid Cache and Solid Queue tables share the primary database. They are managed by their own schema files and are not part of this domain design.
 
@@ -152,11 +152,14 @@ Each index is justified by a query or constraint. MySQL creates an index for eve
 | `employees` | `(department_id)` | FK | Department filter, breakdown join |
 | `employees` | `(employment_status)` | secondary | Status filter; analytics exclude terminated |
 | `employees` | `(last_name, first_name)` | secondary | Sort by name |
+| `employees` | `(hired_on)` | secondary | Employee list `sort=hired_on` (added in 6.2, §13) |
+| `employees` | `(created_at)` | secondary | Employee list `sort=created_at` (added in 6.2, §13) |
+| `employees` | `(employment_status, country_id)` | secondary | Employee list and analytics filtered by status and country (added in 6.2, §13) |
 | `salary_records` | `(employee_id, effective_from)` | UNIQUE | One record per start date; history listing in order; latest-record lookup under lock; FK index for `employee_id` |
 | `salary_records` | `(employee_id, open_flag)` | UNIQUE | **At most one open-ended record per employee** (NULLs do not collide) |
 | `salary_records` | `(currency_code)` | FK | Currency FK, currency filter |
 
-Not added up front: composite filter indexes on `employees`, sort indexes for `hired_on` and `created_at` (a filesort over about 10k rows is cheap), and an `(effective_from, effective_to)` index. At this scale, as-of scans over about 20k salary rows are cheap. Phase 6.2 will measure with `EXPLAIN ANALYZE` on seeded data and add indexes only where the plans show a need.
+Not added up front: composite filter indexes on `employees`, sort indexes for `hired_on` and `created_at`, and an `(effective_from, effective_to)` index. **Measured in 6.2 (§13):** the `hired_on`, `created_at`, and `(employment_status, country_id)` indexes met the BACKEND_PLAN.md N11 rule and were added (migration `20260929100001_add_measured_indexes.rb`). `(effective_from, effective_to)` changed no timing and was not added. The single-column `employment_status` index is now a left prefix of the composite; it is kept (removing it was not measured).
 
 ## 5. Integrity rules and where they are enforced
 
@@ -193,7 +196,7 @@ I10 relies on every write going through the services. Direct SQL or console writ
 - **Correction** (`Salaries::CorrectionService`): the same employee-row lock. Verify the record is **editable**, then update `amount` and/or `currency_code`. A record is editable when it is in effect on `Date.current`, or when its `effective_from` is after `Date.current` (future-dated, O1). Records whose period ended before today are historical and rejected.
 - **Employee create with an initial salary** (`Employees::CreateService`): both inserts run in one transaction.
 - **Isolation:** InnoDB's default `REPEATABLE READ`. The employee-row lock serialises all salary writes for one employee, and the unique indexes (I8, I9) are the backstop if the lock is bypassed.
-- Any failure rolls back the whole operation. Constraint violations (`ActiveRecord::RecordNotUnique`, `ActiveRecord::StatementInvalid` from a CHECK) are mapped to `422` with a generic message.
+- Any failure rolls back the whole operation. A unique-index violation (`ActiveRecord::RecordNotUnique`, e.g. two concurrent creates with the same `employee_number`) is mapped to `422 validation_failed` with a generic message. `details` is given only for the `employee_number` and `email` indexes, and the duplicate value is never echoed (implemented in 6.1, BACKEND_PLAN.md N5). CHECK violations are unreachable through the API because validations run first; if one occurred it would be a `500`.
 
 ## 7. Query shapes
 
@@ -350,3 +353,62 @@ Each rule, where it is enforced, and the test that proves it. The SQL checks in 
 | I13 salary not before hire | Model (both sides); integrity SQL | `models/salary_record_test.rb`, `models/employee_test.rb`, `services/salaries/change_service_test.rb`, `services/employees/create_service_test.rb`, `lib/demo/integrity_check_test.rb` |
 
 No open gaps: I12's "no destroy routes" was verified in 4.3 (employees) and 4.4 (salary records).
+
+## 13. Measured performance (6.2)
+
+Observations on the owner's laptop (MySQL 8.4.10, development environment) against the deterministic demo data. `demo:verify` showed 10,000 employees, 16,826 salary records, and 0 integrity violations. **These are not SLAs** (requirements §4, §7). Method (BACKEND_PLAN.md N8): read-only `bin/rails runner` scripts, query cache off, best of 5 after a warm-up. Each scenario's slowest SQL statement was re-run under `EXPLAIN ANALYZE`. `as_of` is 2026-09-28, and 25 rows per page.
+
+### 13.1 Query layer (after the 6.2 indexes)
+
+| Scenario | Best | Queries | Plan of the slowest statement |
+|---|---|---|---|
+| Employee list, default, page 1 | 3.8 ms | 4 | `employee_number` index order |
+| Employee list, `country_id` / `department_id` | 2.3 ms | 4 | index order |
+| Employee list, `employment_status=terminated` | 3.7 ms | 4 | status index + sort |
+| Employee list, country + department + status | 4.6 ms (was 12.1) | 4 | `(employment_status, country_id)` + department index |
+| Employee list, `q=smith` / `q=EMP-0999` | 18–19 ms | 4 | full index scan for `LIKE '%…%'` (D27, accepted) |
+| Employee list, `sort=last_name` | 2.3 ms | 4 | `(last_name, first_name)` index |
+| Employee list, `sort=hired_on` / `created_at` | 2.1–2.4 ms (was 6.3) | 4 | new single-column index |
+| Employee list, `sort=-hired_on` / `-created_at` | 6.2–7.3 ms | 4 | table scan + filesort (see 13.3) |
+| Employee list, page 400 | 16.6 ms | 4 | table scan + sort (OFFSET kept) |
+| Employee detail | 1.8 ms | 5 | PK and `(employee_id, open_flag)` lookups |
+| Salary history (5 records) | 1.0 ms | 3 | `(employee_id, effective_from)` |
+| Analytics summary: default / country / past `as_of` | 41 / 13 / 42 ms | 4 | salary scan joined by PK; median window over a temp table |
+| Analytics distribution | 68 ms | 3 | employees scan + `(employee_id, effective_from)`; temp table |
+| Analytics breakdown: country / department | 50 ms | 4 | as summary, partitioned by dimension |
+| Report JSON: default / `last_name` | 18–20 ms | 6 | employees scan + `(employee_id, effective_from)` |
+| Report JSON: `sort=amount` / `-amount` | 47–48 ms | 6 | as above + sort of about 9.3k joined rows |
+| Report JSON, `q=smith` | 13 ms | 6 | `employee_number` index scan |
+| Report JSON, page 370 | 51 ms | 6 | join + sort |
+| CSV, full export (9,336 rows, 0.73 MB) | 293 ms | 1 | 71 ms SQL; the rest is Ruby CSV formatting |
+
+The default analytics population is about 94% of employees, so full scans there are expected, and no index removes them.
+
+### 13.2 HTTP (development server, signed in as a temporary user)
+
+Best of 5 with `curl` against `bin/rails server` in development. Development mode adds a floor of about 35–40 ms per request (reloader checks, debug SQL logging), so these figures are pessimistic.
+
+| Endpoint | Best |
+|---|---|
+| `GET /employees` (default, combined filters, `sort=hired_on`) | 40–41 ms |
+| `GET /employees?q=smith` / `?sort=-hired_on` / `?page=400` | 63 / 51 / 72 ms |
+| `GET /employees/:id`, `GET /employees/:id/salary_records` | 37–38 ms |
+| `GET /analytics/summary` / `distribution` / `breakdown?by=country` | 81 / 94 / 80 ms |
+| `GET /reports/salaries` / `?sort=amount` / `?page=370` | 51 / 72 / 76 ms |
+| `GET /reports/salaries.csv` (727,776 bytes) | 338 ms |
+
+The temporary user (`perf-smoke@example.test`) was created and deleted in one script: `User.count` was 1 before, 2 during, and 1 after.
+
+### 13.3 Index decisions (BACKEND_PLAN.md N11)
+
+Rule: add an index only when a scenario exceeds 100 ms uncached, or an index removes a scan or filesort with at least a 2× gain for that scenario. All candidates were added in a trial migration, measured, and then kept or dropped.
+
+| Candidate | Result | Decision |
+|---|---|---|
+| `(hired_on)` | `sort=hired_on` 6.3 → 2.4 ms (2.6×); `-hired_on` unchanged | **Added** |
+| `(created_at)` | `sort=created_at` 6.3 → 2.1 ms (3.0×); `-created_at` unchanged | **Added** |
+| `(employment_status, country_id)` | combined filter 12.1 → 4.6 ms (2.6×) | **Added** |
+| `(effective_from, effective_to)` | analytics 40–68 ms, unchanged | Not added |
+| CSV (only scenario over 100 ms) | SQL is 71 of 293 ms; the time is Ruby formatting | No index helps; accepted (synchronous, capped, D24) |
+
+Descending sorts order by `field DESC, id ASC`, a mixed direction a single-column index can't serve, so they stay a filesort of about 7 ms. That is below the threshold, and changing the tie-break direction would alter the documented ordering (API §2.4), so neither was changed.

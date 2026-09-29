@@ -43,5 +43,13 @@ module ActionDispatch
     def json
       response.parsed_body
     end
+
+    # Queries run by the block, excluding schema, transaction, and cached ones (N+1 checks compare two counts).
+    def count_queries(&block)
+      count = 0
+      counter = ->(*, payload) { count += 1 unless payload[:name].in?([ "SCHEMA", "TRANSACTION" ]) || payload[:cached] }
+      ActiveSupport::Notifications.subscribed(counter, "sql.active_record", &block)
+      count
+    end
   end
 end

@@ -12,6 +12,7 @@ module Api
       rescue_from Api::BadRequest, with: :render_invalid_parameter
       rescue_from ActiveRecord::RecordNotFound, with: :render_not_found
       rescue_from ActiveRecord::RecordInvalid, with: :render_record_invalid
+      rescue_from ActiveRecord::RecordNotUnique, with: :render_record_not_unique
       rescue_from ActionController::InvalidAuthenticityToken, with: :render_invalid_csrf_token
     end
 
@@ -46,6 +47,20 @@ module Api
 
     def render_record_invalid(exception)
       render_validation_errors(exception.record.errors)
+    end
+
+    # A request that passed the uniqueness validations but lost a race to the unique index
+    # (database design §6, BACKEND_PLAN.md N5). MySQL's message contains the duplicate value, so only the
+    # index name is inspected, and details are given only for known indexes.
+    UNIQUE_INDEX_FIELDS = {
+      "index_employees_on_employee_number" => "employee_number",
+      "index_employees_on_email" => "email"
+    }.freeze
+
+    def render_record_not_unique(exception)
+      field = UNIQUE_INDEX_FIELDS.find { |index, _| exception.message.include?(index) }&.last
+      render_error(:unprocessable_entity, "validation_failed", "Please correct the highlighted fields.",
+        details: field && { field => [ "has already been taken" ] })
     end
 
     def render_invalid_csrf_token(_exception = nil)

@@ -117,13 +117,4 @@ class Api::V1::SalaryReportTest < ActionDispatch::IntegrationTest
     assert_equal 12, json["data"].size
     assert_equal few, many
   end
-
-  private
-
-  def count_queries(&block)
-    count = 0
-    counter = ->(*, payload) { count += 1 unless payload[:name].in?([ "SCHEMA", "TRANSACTION" ]) || payload[:cached] }
-    ActiveSupport::Notifications.subscribed(counter, "sql.active_record", &block)
-    count
-  end
 end

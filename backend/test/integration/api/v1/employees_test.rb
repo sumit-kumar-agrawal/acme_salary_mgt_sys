@@ -183,7 +183,7 @@ class Api::V1::EmployeesTest < ActionDispatch::IntegrationTest
     [ api_v1_employee_path(999_999_999), "/api/v1/employees/abc" ].each do |url|
       get url
       assert_response :not_found, url
-      assert_equal "not_found", json.dig("error", "code")
+      assert_equal({ "code" => "not_found", "message" => "Not found." }, json["error"], "generic, no id or record data")
     end
   end
 
@@ -221,6 +221,44 @@ class Api::V1::EmployeesTest < ActionDispatch::IntegrationTest
     assert_equal "validation_failed", json.dig("error", "code")
     assert_equal %w[country_id employee_number first_name hired_on], details.keys.sort
     assert_equal [ "has already been taken" ], details["employee_number"]
+  end
+
+  test "a duplicate email returns 422 without echoing it" do
+    create(:employee, email: "taken@example.test")
+
+    post api_v1_employees_path, params: { employee: employee_body(email: "TAKEN@example.test") }, as: :json
+
+    assert_response :unprocessable_entity
+    assert_equal({ "email" => [ "has already been taken" ] }, json.dig("error", "details"))
+    assert_not_includes response.body.downcase, "taken@example.test"
+  end
+
+  # N5: a concurrent request passes the uniqueness validation and then hits the unique index. Validations
+  # are skipped to reproduce that, so the real MySQL duplicate-key error is raised.
+  test "losing a race to the unique index on create returns 422, not 500, and saves nothing" do
+    create(:employee, employee_number: "EMP-10001")
+
+    assert_no_difference -> { Employee.count } do
+      without_employee_validations { post api_v1_employees_path, params: { employee: employee_body }, as: :json }
+    end
+
+    assert_response :unprocessable_entity
+    assert_equal({ "code" => "validation_failed", "message" => "Please correct the highlighted fields.",
+                   "details" => { "employee_number" => [ "has already been taken" ] } }, json["error"])
+    assert_not_includes response.body, "EMP-10001", "the duplicate value is not echoed"
+  end
+
+  test "losing a race to the unique index on update returns 422 naming the field" do
+    create(:employee, email: "taken@example.test")
+    employee = create(:employee)
+
+    without_employee_validations do
+      patch api_v1_employee_path(employee), params: { employee: { email: "taken@example.test" } }, as: :json
+    end
+
+    assert_response :unprocessable_entity
+    assert_equal({ "email" => [ "has already been taken" ] }, json.dig("error", "details"))
+    assert_not_equal "taken@example.test", employee.reload.email
   end
 
   test "an invalid initial salary returns prefixed errors and creates nothing" do
@@ -300,10 +338,10 @@ class Api::V1::EmployeesTest < ActionDispatch::IntegrationTest
 
   private
 
-  def count_queries(&block)
-    count = 0
-    counter = ->(*, payload) { count += 1 unless payload[:name].in?([ "SCHEMA", "TRANSACTION" ]) || payload[:cached] }
-    ActiveSupport::Notifications.subscribed(counter, "sql.active_record", &block)
-    count
+  def without_employee_validations
+    Employee.define_method(:valid?) { |*| true }
+    yield
+  ensure
+    Employee.remove_method(:valid?)
   end
 end

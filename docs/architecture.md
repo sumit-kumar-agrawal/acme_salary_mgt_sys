@@ -169,6 +169,7 @@ Every error uses one envelope, rendered by the `ErrorHandling` concern:
 | `ActionController::ParameterMissing`, malformed filter or sort | 400 | `bad_request` | Unknown sort fields are rejected, not ignored |
 | `ActiveRecord::RecordNotFound` | 404 | `not_found` | Generic message; no ids or record data echoed |
 | `ActiveRecord::RecordInvalid`, service validation failure | 422 | `validation_failed` | `details` contains attribute → messages only, never submitted values |
+| `ActiveRecord::RecordNotUnique` (lost race to a unique index) | 422 | `validation_failed` | `details` only for `employee_number`/`email`; the duplicate value is never echoed |
 | Correction of a historical record | 422 | `salary_record_not_editable` | |
 | `ActionController::InvalidAuthenticityToken` | 422 | `invalid_csrf_token` | |
 | CSV export would exceed 10,000 rows | 422 | `export_too_large` | No silent truncation (D24) |
@@ -177,7 +178,7 @@ Every error uses one envelope, rendered by the `ErrorHandling` concern:
 
 ## 7. Logging and data redaction
 
-- `filter_parameters` adds `password`, `amount`, `salary`, `email`, `first_name`, `last_name`, and `csrf_token` on top of the Rails defaults. The same list drives `ActiveRecord` `filter_attributes`, so `inspect` output in logs and consoles is redacted too.
+- `filter_parameters` adds `password`, `amount`, `salary`, `email`, `first_name`, `last_name`, and `csrf_token` on top of the Rails defaults, plus the search parameter `q` as an exact match (search input is often a name; 6.3, BACKEND_PLAN.md N7). The filter applies to both the `Started GET "…?q=[FILTERED]"` request line and the `Parameters:` line. The same list drives `ActiveRecord` `filter_attributes`, so `inspect` output in logs and consoles is redacted too. Tested in `test/integration/api/v1/log_redaction_test.rb` and `test/config/security_config_test.rb`.
 - Production log level is `info` (`RAILS_LOG_LEVEL` defaults to `info` in `production.rb`), so SQL statements are not logged. Development may log SQL with synthetic data only. **Verified in 4.4:** at `info`, request parameters are `[FILTERED]` and no amounts or names appear. At `debug`, mysql2 writes values inline in SQL (prepared statements are off), so `filter_attributes` cannot redact them. **Never set `RAILS_LOG_LEVEL=debug` in production.** Enabling `prepared_statements: true` would let Rails redact SQL binds too (open option, not adopted).
 - Exceptions are logged with class, message, and request id, never with record attributes. Services never log salary values.
 - The CSV export sets `Cache-Control: no-store`. The app never writes export files to disk.
@@ -192,6 +193,10 @@ Every error uses one envelope, rendered by the `ErrorHandling` concern:
 
 - **Assessment runtime:** local development with Ruby (RVM), Bundler, and a local MySQL 8.0.16 or later (needed for enforced CHECK constraints). Connection settings come from `backend/.env`, loaded by `dotenv-rails`. Docker support is deferred by the owner. The generated `Dockerfile`, Kamal, and Thruster files are unused until then (G3).
 - **Production-like environment (assumed, not specified):** a single Puma process behind a TLS-terminating proxy, with `config.force_ssl = true` and secrets supplied through environment variables. No multi-region deployment, replicas, or cache servers.
+- **Deployment prerequisites (6.3, BACKEND_PLAN.md N15):**
+  - Set `config.hosts` in `production.rb` (e.g. from an `APP_HOSTS` environment variable) to the served host names. It is unset in the generated app, so host-header checks are off until a deployment exists.
+  - Keep `RAILS_LOG_LEVEL` at `info` or above. **Never use `debug` in production:** mysql2 logs SQL with inline values at `debug` (§7). Enabling `prepared_statements: true` would also redact SQL binds; it is optional and not adopted.
+  - The session cookie is `Secure` in production (`session_store.rb`, tested in `test/config/security_config_test.rb`), and `force_ssl`/`assume_ssl` are on.
 - **Cache, queue, and rate-limit store:** Solid Cache backs `Rails.cache`, and therefore the login `rate_limit`. Solid Queue is the Active Job adapter (no jobs planned). Both use MySQL tables; in development they share the primary database (`db/cache_schema.rb`, `db/queue_schema.rb`). Tests use `:memory_store` for rate-limit tests.
 - **Versions and libraries:** Ruby 3.2.0 and Rails 8.0.5; the gem list and its justifications are in ADR 005.
 

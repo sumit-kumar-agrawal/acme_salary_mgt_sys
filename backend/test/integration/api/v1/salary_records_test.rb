@@ -72,6 +72,24 @@ class Api::V1::SalaryRecordsTest < ActionDispatch::IntegrationTest
     assert_nil json["meta"], "history is unpaginated"
   end
 
+  test "the history query count does not grow with the number of records (no N+1)" do
+    employee = create(:employee, hired_on: Date.new(2010, 1, 1))
+    add_years = lambda do |years|
+      years.each_with_index do |year, i|
+        create(:salary_record, employee: employee, amount: "70000", currency_code: i.even? ? "INR" : "USD",
+          effective_from: Date.new(year, 1, 1), effective_to: Date.new(year, 12, 31))
+      end
+    end
+
+    add_years.call(2013..2014)
+    few = count_queries { get api_v1_employee_salary_records_path(employee) }
+    add_years.call(2015..2024)
+    many = count_queries { get api_v1_employee_salary_records_path(employee) }
+
+    assert_equal 12, json["data"].size
+    assert_equal few, many
+  end
+
   test "an employee without salary records has an empty history" do
     get api_v1_employee_salary_records_path(@employee)
 

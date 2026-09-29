@@ -486,7 +486,7 @@ The CSV takes the same parameters, except `page` and `per_page`, which are ignor
 | 401 | `invalid_credentials` | Login failed |
 | 403 | — | Reserved; not used in v1 (D17) |
 | 404 | `not_found` | Unknown route or record, or a salary record belonging to another employee. Generic message. |
-| 422 | `validation_failed` | Field validation failure, including a date field sent to a correction |
+| 422 | `validation_failed` | Field validation failure, including a date field sent to a correction, or a duplicate `employee_number`/`email` caught by the database after a concurrent request |
 | 422 | `salary_record_not_editable` | Correction attempted on a historical record |
 | 422 | `export_too_large` | CSV would exceed 10,000 rows |
 | 422 | `invalid_csrf_token` | CSRF token missing or wrong on a state-changing request |

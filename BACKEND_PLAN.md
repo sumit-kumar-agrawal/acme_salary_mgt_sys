@@ -745,23 +745,217 @@ Notes:
 ## Phase 6 — Backend quality, performance, and regression
 **Goal:** Validate backend behavior against the target data volume without inventing unspecified SLAs.
 
+### Phase 6 review findings (2026-09-29)
+
+Inputs: requirements §4 (NFRs), §8, §11; API spec §1, §10, §12; architecture §5–§7, §9; database design §4, §6, §12; ADRs 004 and 005; `.claude/rules/*`; the codebase and test suite after Phase 5. No code written. Observed:
+- **Suite:** 230 runs and 886 assertions across 31 test files (models, services, queries, concerns, helpers, integration, lib and tasks). It has passed on 5 seeds at the end of every subphase. There is no line-coverage tool (no SimpleCov).
+- **Measured so far on the 10k demo data:**
+  - employee list 9–32 ms (4.3);
+  - analytics 41–70 ms uncached (5.1);
+  - full CSV export (9,336 rows) about 300 ms (5.3).
+  - Not yet measured: employee detail, salary history, JSON report sorts and `q`, deep pages, past `as_of`, and pagination `COUNT`s.
+- **N+1 tests** exist for the employee list and the salary report. Salary history preloads `currency`, but no test proves its query count is constant.
+- **Authentication tests are per file.** No test walks the route table, so a future route added without the default-deny base controller would go unnoticed.
+- **CSRF** is tested only on `POST /session` (sessions test). No test covers the employee or salary `POST`/`PATCH` routes with forgery protection on.
+- **Defect (contract gap):** database design §6 says unique or CHECK violations (`ActiveRecord::RecordNotUnique`, `StatementInvalid`) map to `422` with a generic message. Nothing in `app/` rescues them, so two concurrent creates with the same `employee_number` or `email` would pass validation and return **`500 internal_error`**. Salary writes are protected by the employee row lock, but employee create and update are not.
+- **Log exposure:** Rails logs `Started GET "<filtered_path>"` and `Parameters:` at `info`. `filter_parameters` covers `amount`, `salary`, `first_name`, `last_name`, and `email`, but **not `q`**, so a name typed into employee or report search is logged in clear text. The L17 log test covers salary writes and login, not employee create/update or searches.
+- **Production config:** `force_ssl` and `assume_ssl` are on; the log level defaults to `info`; `config.hosts` is unset (commented out). The `Secure` cookie flag is set by `session_store.rb` for production, but only `HttpOnly` and `SameSite` are tested. `prepared_statements` is not set (the 4.4 follow-up is still open).
+- **Tooling:** Brakeman and RuboCop run locally. There is no dependency-vulnerability scan (`bundler-audit` is not installed). `backend/.github/workflows/ci.yml` sits outside the repo root, so GitHub never runs it, and it calls `importmap audit` and system tests (G3, kept by the owner).
+- **Support dates:** Ruby 3.2.0 is past end of life, and Rails 8.0.x support ends **2026-11-07**, five weeks from today (ADR 005; Brakeman ignores both warnings).
+- **Dev DB:** 10,000 employees, 16,826 salary records, and 1 user (the owner's HR login, whose password Claude does not have). The demo data is deterministic (seed 42), and `demo:verify` can confirm it is unchanged.
+
+#### A. Missing decisions
+
+**Owner decisions (2026-09-29):** N1–N13, N15, and N16 approved as recommended, including N9 option **(b)**: a temporary dev user, created and deleted by Claude. **N14 declined:** no dependency audit is run in Phase 6, and the missing scan is recorded as an accepted risk.
+
+| ID | Decision | Recommendation | Needed by |
+|---|---|---|---|
+| N1 | **Fixing defects found while adding tests.** | 6.1 adds tests for behaviour that is already documented. If a test exposes a defect against the documented contract (e.g. N5), fix it in the same task with the smallest change and record it. Anything that changes the contract goes back to the owner. | 6.1 |
+| N2 | **How coverage is judged.** | A requirement → test matrix (requirements §11, API spec §12, `.claude/rules/testing.md`) recorded under 6.1, with every row pointing at test names. No SimpleCov: line coverage would add a gem and says little about business rules. The owner can still request it (ADR 005 amendment). | 6.1 |
+| N3 | **Default-deny proof.** | One integration test that walks `Rails.application.routes` under `/api/v1`, skipping `GET /health`, `GET`/`POST /session`, and the catch-all. For every other route and verb it asserts a JSON `401` without a session. New routes are covered automatically. | 6.1 |
+| N4 | **CSRF coverage.** | The same route walk with `allow_forgery_protection = true` (pattern L7). Signed in, every `POST`/`PATCH`/`DELETE` without a token gets `422 invalid_csrf_token`, and with the token gets anything but that. | 6.1 |
+| N5 | **Unique-constraint race → `422` (design §6).** | `ErrorHandling` rescues `ActiveRecord::RecordNotUnique` → `422 validation_failed` with a generic message. `details` is filled only for known unique indexes, mapped to request fields (`employee_number`, `email` → `["has already been taken"]`); otherwise it is omitted. It never contains values. CHECK violations stay `500`, since validations make them unreachable through the API. Test by making a controller path raise (as the 4.1 `500` test does), because the race can't be reproduced in a transactional test. | 6.1 |
+| N6 | **Real concurrency tests.** | None. Transactional tests share one connection, so two-thread tests would be flaky and slow. Rely on the existing lock test (`lock!` called), the unique-index tests (I8, I9), and N5. Record this as an accepted limitation. | 6.1 |
+| N7 | **Search terms in logs.** | Add `:q` to `filter_parameters` (search input is often a name). Extend the L17 log test to cover employee create/update and `GET` with `q` on employees and the report, at `info`. | 6.3 |
+| N8 | **How performance is measured.** | Read-only `bin/rails runner` scripts in Claude's scratchpad (not committed), against the deterministic dev dataset after `demo:verify`. The query cache is off, each case takes the best of 5 runs, and `EXPLAIN ANALYZE` is captured for each query. No writes to the dev DB. | 6.2 |
+| N9 | **End-to-end HTTP timings at volume** need a signed-in session, and Claude doesn't have the HR password. | **(a)** Claude writes a curl script that the owner runs with their credentials; **(b)** with owner approval, Claude creates a temporary user (`perf-smoke@example.test`) in the dev DB and deletes it afterwards; **(c)** skip HTTP and rely on N8 query and render timings. Recommended: **(b)**, falling back to (a). | 6.2 |
+| N10 | **Scenarios to measure.** | Employee list: default, each filter, `q`, each sort, and page 400. Employee detail. History of the employee with the most records. Analytics ×3: default, filtered, and past `as_of`. JSON report: default, `sort=amount`, `q`, and a deep page. Full CSV. Pagination `COUNT`s. OFFSET paging is kept (at 10k rows, page 400 is cheap); keyset paging is not introduced. | 6.2 |
+| N11 | **When to add an index.** | Only when a scenario is over **100 ms uncached** on the 10k data, *or* `EXPLAIN` shows a scan or filesort that an index removes with at least a 2× gain. 100 ms is an internal review threshold, **not an SLA**. Candidates already named in design §4: `hired_on` / `created_at` sorts, `(employment_status, country_id)`, `(effective_from, effective_to)`. Any index goes through a migration with a round-trip check (J13). | 6.2 |
+| N12 | **Where results are recorded.** | A new database design **§13 "Measured performance (6.2)"** (scenario, rows, time, plan, decision), rather than a separate document. The plan's 6.2 notes summarise it. | 6.2 |
+| N13 | **Target-volume regression (phase gate).** | No 10k-row tests in the suite (too slow, and they duplicate the known-data tests). Instead run `demo:verify` plus a read-only runner script of cross-endpoint invariants on the dev data: <br>- per-currency counts add up to the population; <br>- band counts equal the employee counts; <br>- breakdown counts add up to the summary counts; <br>- CSV row count equals the report's `total_count`; <br>- no currency appears without its own rows. <br>Record the results. | 6.2 / 6.3 |
+| N14 | **Dependency vulnerability scan.** *Declined by the owner (2026-09-29).* | ~~An owner-approved one-off `gem install bundler-audit` (outside the Gemfile, so no new app dependency), then `bundle-audit check --update`, which needs network access. Record the results; fixing any finding that needs a gem update is an owner decision.~~ Not run; recorded as an accepted risk in 6.3. | 6.3 |
+| N15 | **Production hardening.** | Test that the production session config sets `Secure`. Set `config.hosts` from an env var (e.g. `APP_HOSTS`) in production, or document it as a deployment prerequisite (deployment is deferred, so documenting is the recommended default). Close the 4.4 log follow-up: keep `info` and document "never `debug` in production"; `prepared_statements: true` stays optional. | 6.3 |
+| N16 | **CI.** | Out of scope for Phase 6. `backend/.github/workflows/ci.yml` stays inert (G3). Phase 7 documents the manual quality commands. The owner can ask for a root-level workflow later. | 6.3 |
+
+#### B. Assumptions
+- No latency, throughput, or concurrency SLA exists (requirements §4, §7). Timings are reported as observations on the owner's laptop (MySQL 8.4), not guarantees.
+- The dev DB still holds the deterministic 10k dataset. `demo:verify` confirms this before any measurement; if it differs, the owner reseeds.
+- One HR user and a same-site frontend (ADR 004). No new roles, CORS, or JWT.
+- Phase 6 changes are limited to tests, verified defect fixes (N1), measured indexes (N11), and config or doc hardening (N7, N15). No new features and no new gems unless the owner approves (N2, N14).
+- The owner still commits, and the 31 root-level `AD` entries should be unstaged before the next commit.
+
+#### C. Dependencies
+
+| Dependency | Blocks | Owner |
+|---|---|---|
+| ~~Approval of N1–N16~~ Approved 2026-09-29 except N14 | 6.1 | Project owner |
+| Dev DB with the unchanged 10k demo dataset (`demo:verify`) | 6.2, N13 | Owner (reseed if changed) |
+| A temporary dev user (N9 b, approved) | 6.2 HTTP timings | Claude (created and deleted in one script) |
+| 6.1 test additions and the N5 fix | 6.3 regression run | — |
+| Carried over: README health line (2.2); log-level decision (4.4, folded into N15) | 6.3 / 7.2 | Project owner |
+
+#### D. Risks
+
+| Risk | Likelihood / impact | Mitigation |
+|---|---|---|
+| A duplicate-key race returns `500` and breaks the documented contract | Low (single user) / Medium | N5 fix and test |
+| A new route ships without authentication or CSRF | Low / High | N3, N4 route-walking tests |
+| Employee names leak into logs through `q` | High (always happens at `info`) / Medium | N7 filter and extended log test |
+| Rails 8.0 support ends 2026-11-07; Ruby 3.2.0 is already past end of life | Certain / Medium for real data, Low for the assessment | Record in 6.3 and Phase 7 known limitations; upgrade is out of Phase 6 scope |
+| Unpatched gem vulnerabilities go unnoticed | Medium / Medium | N14 declined: accepted risk; listed in Phase 7 known limitations (e.g. run `bundle-audit` or enable Dependabot before real data) |
+| Indexes added without evidence (or missing where needed) | Medium / Low | N11 threshold and `EXPLAIN`; the migration round-trip check |
+| Measurement noise on a laptop | Medium / Low | Best of 5, query cache off, report plans as well as times |
+| A temporary user is left in the dev DB (N9 b) | Low / Medium | Created and deleted in one script with `ensure`; `User.count` checked before and after |
+| Route-walking tests are brittle (the catch-all or globbed routes) | Medium / Low | Explicit skip list; fill route params with an existing record's id |
+| Scope creep into Phase 7 docs or CI | Medium / Low | N16; 6.x docs limited to design §13 and the plan |
+
 ### 6.1 Backend test coverage review
-**Prompt:** `Review model, service, and integration tests against docs/requirements.md and docs/api-specification.md. Add missing tests for salary history, currency-safe analytics, validation, pagination, and authorization. Run the relevant Minitest suite (`bin/rails test`) and report actual results.`
-**Deliverables:** Coverage review, additional tests, and test results.
-**Acceptance:** Critical backend acceptance criteria have automated coverage; gaps are documented.
-**Status:** Not Started
+**Prompt:** `Per N1–N6: build the requirement → test matrix (requirements §11, API spec §12, testing rules), add the missing tests (route-walking 401 and CSRF, salary-history N+1, RecordNotUnique → 422), fix documented-contract defects they expose, and run bin/rails test on several seeds.`
+**Tasks:**
+1. ~~Owner: approve N1–N16.~~ Approved 2026-09-29 except N14.
+2. ~~Requirement → test matrix (N2).~~ Done 2026-09-29; see below.
+3. ~~`test/integration/api/v1/route_protection_test.rb`: default-deny route walk (N3) and CSRF route walk (N4).~~ Done 2026-09-29. The walk covers 21 `/api/v1` route/verb pairs (8 state-changing), and a guard test asserts the documented routes are among them.
+4. ~~N5: `RecordNotUnique` → `422 validation_failed` in `ErrorHandling` (known-index `details` only), with integration tests on employee create and update.~~ Done 2026-09-29.
+5. ~~Salary-history no-N+1 test; further gap tests from the matrix.~~ Done 2026-09-29: history N+1; duplicate `email` through the API (422, value not echoed); the `404` body asserted generic. The unpermitted `id`/`created_at` case was already covered ("unknown body fields are ignored").
+6. ~~`bin/rails test` on 5 seeds; RuboCop; Brakeman.~~ Done 2026-09-29.
+
+**Deliverables:** Coverage matrix, new tests, the N5 fix, and test results.
+**Acceptance:**
+- Every FR-01…FR-07, NFR security/reliability row, and API §12 bullet maps to at least one passing test, or is listed as an accepted gap with a reason (e.g. N6).
+- The suite passes on 5 seeds; RuboCop and Brakeman clean.
+
+**Status:** Done (2026-09-29). `bin/rails test` 238 runs, 995 assertions, 0 failures on 5 seeds (1, 42, 1234, 9876, 31337); RuboCop 127 files clean; Brakeman 0 warnings (2 ignored).
+
+**Coverage matrix (6.1, N2).** Test files are under `backend/test/`; `int/` = `integration/api/v1/`.
+
+| Requirement / API §12 bullet | Covered by (test file → tests) | Status |
+|---|---|---|
+| FR-01 Employee management | `int/employees_test` (create with and without initial salary, update, detail, list, `404`, no `DELETE`); `models/employee_test`; `services/employees/create_service_test`; `int/reference_data_test` | Covered |
+| FR-02 Salary records | `models/salary_record_test` (amount > 0, scale vs minor units, currency, period order, hire date, read-only columns); `int/salary_records_test` (create, validation `422`, corrections); `services/salaries/correction_service_test` | Covered |
+| FR-03 Salary history | `services/salaries/change_service_test` (closes prior period, rollback, backdate, scheduled, lock); `int/salary_records_test` (history order and status, historical `422`); `models/salary_record_test` (one open record, overlap, same start date) | Covered |
+| FR-04 Search, filters, pagination | `int/employees_test` (filters, `q`, sorts, pagination, `400`, N+1); `int/salary_report_test`; `controllers/concerns/api/query_params_test`; `…/pagination_test` | Covered |
+| FR-05 Analytics | `queries/analytics/*` (22 known-data tests); `int/analytics_test` (9 contract tests) | Covered |
+| FR-06 Reports and export | `int/salary_report_test`; `int/salary_report_csv_test` (CSV = JSON pages, allowlist, formula guard, cap `422`, JSON errors) | Covered |
+| FR-07 Authentication and access | `int/sessions_test` (login, generic failure, fixation, logout, expiry, `429`, cookie flags, CSRF on session); **`int/route_protection_test`** (every route `401`; every state-changing route needs CSRF); a `401` test in each endpoint file | Covered |
+| NFR Performance | N+1 tests: employee list, salary report, **salary history** (new) | Covered in tests; 10k measurements in **6.2** |
+| NFR Security and privacy | Log redaction at `info` (`int/salary_records_test`, `int/sessions_test`); no email or salary in lists (D18); errors never echo values (employees, salary, **duplicate email**, **N5 race**); generic `404` body; `no-store` (analytics, report, CSV); formula guard; CSRF walk | Covered, except: `q` in logs (**6.3, N7**); `Secure` cookie in production (**6.3, N15**) |
+| NFR Reliability | Rollback tests (`create_service_test`, `change_service_test`); lock test; DB guards (unique, CHECK, FK tests in the model tests); **N5 race → `422`** | Covered. Accepted gap: no real multi-thread tests (**N6**) |
+| NFR Maintainability | This suite; RuboCop; Brakeman | Covered; setup docs in Phase 7 |
+| §12 Auth | route walk `401`; generic login failure; `429`; CSRF walk; logout; idle and absolute expiry | Covered |
+| §12 Employees | required fields and formats; unique number (`422` + race) and email (`422` + race); filter combinations; sort allowlist `400`; `per_page` cap; list without salary or email; transactional create; no delete route | Covered |
+| §12 Salary | period closing; backdated, same-date, and pre-hire `422`; JPY and KWD scale; `scheduled` status; current and scheduled corrections; historical `422`; date fields `422`; another employee's record `404` | Covered |
+| §12 Analytics | per-currency totals; no cross-currency total; odd and even medians; `as_of`; terminated excluded; bands; dimension + currency keys; `by` validated | Covered |
+| §12 Reports | JSON = CSV rows; column allowlist; formula escaping; over-cap `422`; JSON `401` on CSV | Covered |
+| §12 Privacy | no submitted values in error bodies; salary fields filtered from logs | Covered; `q` filtering in **6.3** |
+| Operational (health, `hr:create_user`, demo tasks) | `int/health_test`; `lib/tasks/hr_rake_test`; `lib/tasks/demo_rake_test`; `lib/demo/*` | Covered |
+
+Notes:
+- **N5 fix (defect against design §6):** `Api::ErrorHandling` rescues `ActiveRecord::RecordNotUnique` → `422 validation_failed`, with `details` only for `index_employees_on_employee_number` and `index_employees_on_email`. The race is reproduced by temporarily making `Employee#valid?` return true, so the real MySQL error fires. **Mutation check:** with the rescue removed, both tests error with `Mysql2::Error: Duplicate entry '…' for key 'employees.index_employees_on_…'`; the message contains the duplicate value, which is why only the index name is inspected. Docs updated: design §6 (CHECK violations stay `500`, being unreachable through the API), API spec §10, architecture §6.
+- The `count_queries` helper was copied into two test files, so it moved into `ActionDispatch::IntegrationTest` in `test/test_helper.rb`; the history test is its third user.
+- The route walk replaces every `:param` with `1`. A `401` (and the CSRF check) fires before any record lookup, so no records are needed. The session routes are left out of the with-token walk because `sessions_test.rb` covers them.
 
 ### 6.2 Performance and query review
-**Prompt:** `Evaluate employee listing, filters, salary history, and analytics using approximately 10,000 synthetic employees. Inspect query behavior, indexes, pagination, and N+1 queries. Apply only measured, justified optimizations. Do not claim an unspecified latency or concurrency SLA.`
-**Deliverables:** Performance findings and targeted improvements.
-**Acceptance:** No known avoidable N+1 or unbounded listing remains; findings and limitations are documented.
-**Status:** Not Started
+**Prompt:** `Per N8–N13: after demo:verify, measure the N10 scenarios on the 10k dev data (read-only runner scripts, query cache off, best of 5, EXPLAIN ANALYZE). Add an index only when N11's threshold is met, via a migration with a round-trip check. Record results in database design §13. Run the N13 invariants. Do not claim an SLA.`
+**Tasks:**
+1. ~~`bin/rails demo:verify` (dataset unchanged).~~ Done 2026-09-29: 10,000 employees, 16,826 records, 0 violations in every check (the same counts as 3.3). The 3.3 fingerprint method isn't recorded, so the counts and integrity checks stand in for it.
+2. ~~Query and render timings plus `EXPLAIN ANALYZE` for every N10 scenario (N8).~~ Done 2026-09-29: 28 scenarios (design §13.1).
+3. ~~HTTP timings per N9 option (b).~~ Done 2026-09-29: 15 endpoints (design §13.2). Temporary user: `User.count` 1 → 2 → 1; server stopped; port free.
+4. ~~Evaluate the design §4 index candidates against N11.~~ Done 2026-09-29. Trial migration, measured, then finalised: `hired_on`, `created_at`, and `(employment_status, country_id)` added; `(effective_from, effective_to)` dropped (design §13.3).
+5. ~~The N13 cross-endpoint invariants on the dev data.~~ Done 2026-09-29: 33 checks over 3 populations, all holding.
+6. ~~Database design §13 (N12); update design §4.~~ Done 2026-09-29 (design v2.1).
+
+**Deliverables:** Performance findings, justified changes (if any), and the invariant results.
+**Acceptance:**
+- Every N10 scenario is measured with its plan.
+- No avoidable N+1 queries or unbounded listings remain (all lists are paginated or capped).
+- Every index decision cites a measurement.
+- The invariants hold; the limitations are documented.
+
+**Status:** Done (2026-09-29).
+- **Migration:** `db/migrate/20260929100001_add_measured_indexes.rb` (`db:migrate` on dev; `db:migrate:redo STEP=1` leaves `schema.rb` identical; `db:test:prepare`).
+- **Checks:** `bin/rails test` 238 runs, 995 assertions, 0 failures on 5 seeds; RuboCop 128 files clean; Brakeman 0 warnings (2 ignored).
+- **Invariants (N13), each checked for default, `country=IN` + `active`, and `as_of` 2025-01-01:**
+  - in scope = with salary + without;
+  - one salary row per employee;
+  - band counts equal the currency counts, and band edges span min..max;
+  - country and department breakdown counts and totals add up to the summary per currency;
+  - report `total_count` equals the summary count, and CSV rows equal the report count (9,336 / 1,110 / 8,483).
+
+Notes:
+- **Results:** every query-layer scenario is under 100 ms except the full CSV, which is 293 ms, with 71 ms of it SQL and the rest Ruby formatting. Over HTTP in development, requests take 37–94 ms and the CSV 338 ms; development mode adds a floor of about 35–40 ms. No SLA is claimed.
+- **Index gains:** combined status + country filter 12.1 → 4.6 ms; `sort=hired_on` / `created_at` about 6.3 → 2.1–2.4 ms. Descending sorts stay a filesort of about 7 ms, because `field DESC, id ASC` is a mixed direction. Changing the tie-break direction would alter API §2.4 and the gain is below the threshold, so it wasn't changed.
+- **No N+1 and no unbounded lists:** query counts are constant per scenario (3–6). Every list is paginated (at most 100 per page) or capped (CSV at 10,000). Salary history and reference lists are small and bounded by design (API §1).
+- **Owner options, not done:**
+  - the single-column `employment_status` index is now a left prefix of the new composite and could be dropped (not measured, so kept);
+  - `q` contains-search (18–19 ms) scans an index by design (D27).
+- The first HTTP script run failed before creating anything: RVM doesn't load under `set -u`. The check afterwards found no temporary user and a free port. The scripts live in Claude's scratchpad and are not committed (N8).
 
 ### 6.3 API regression and security review
-**Prompt:** `Run backend regression tests and review API security: authentication, authorization, permitted parameters, sensitive data exposure, error responses, and CSV safety if applicable. Fix verified issues and report exact commands and outcomes.`
-**Deliverables:** Regression/security findings and test results.
-**Acceptance:** Critical API workflows pass; unresolved risks and skipped checks are documented.
-**Status:** Not Started
+**Prompt:** `Per N7 and N13–N16: review authentication, authorization, parameters, sensitive-data exposure, error responses, CSV safety, logs, and production config. Apply the approved fixes (q log filter, Secure-cookie test, hosts/log-level docs; no dependency audit, N14 declined), then run the full regression (tests on 5 seeds, RuboCop, Brakeman, live signed-out smoke) and report exact commands and outcomes.`
+**Tasks:**
+1. ~~Security checklist against `.claude/rules/security.md` and architecture §5–§7.~~ Done 2026-09-29; see below.
+2. ~~N7: `q` in `filter_parameters`; extend the log test.~~ Done 2026-09-29. `/\Aq\z/` is an exact match, because a bare `:q` would filter every key containing "q". New `test/integration/api/v1/log_redaction_test.rb` covers employee create and `q` on the employee list, JSON report, and CSV.
+3. ~~N15: production `Secure` cookie test; `config.hosts` decision; log-level follow-up closed.~~ Done 2026-09-29. New `test/config/security_config_test.rb`: `session_store.rb` re-evaluated as production; `force_ssl`, `assume_ssl`, and `info` in `production.rb`; the exact `q` filter; redacted model `inspect`. `config.hosts` and "never `debug`" are recorded as deployment prerequisites in architecture §9. The 4.4 follow-up is closed: keep `info`; `prepared_statements` stays optional and not adopted.
+4. ~~N14: `bundle-audit` run.~~ Declined by the owner; recorded as accepted risk R2 below.
+5. ~~Regression: tests ×5 seeds, RuboCop, Brakeman, live smoke; stop the server afterwards.~~ Done 2026-09-29.
+6. ~~Record the unresolved risks for Phase 7.~~ Done 2026-09-29; see "Accepted risks".
+
+**Deliverables:** Security findings with resolutions, regression results, and the list of accepted risks.
+**Acceptance:**
+- Critical API workflows pass.
+- Every security-rule item has a test or a documented acceptance.
+- No search terms, names, emails, or amounts appear in `info` logs.
+- Unresolved risks and skipped checks are listed with reasons.
+
+**Status:** Done (2026-09-29).
+- **Tests:** `bin/rails test` 245 runs, 1,040 assertions, 0 failures on 5 seeds (1, 42, 1234, 9876, 31337); RuboCop 130 files clean; `bin/brakeman --no-pager` 0 warnings (2 ignored), 0 errors.
+- **N7 mutation check:** with the `q` filter removed, the log test fails, showing `Started GET "/api/v1/employees?q=Garcia…"` and `Parameters: {"q"=>"Garcia"…}`; with it restored, the test passes.
+- **Live smoke on :3111, signed out (the server was stopped and the port freed):**
+  - `GET /health` → `200` `{"status":"ok","database":"ok"}`; `GET /session` → `200` with a CSRF token;
+  - `401` JSON for the employee list, detail, create and update; salary history and create; countries; analytics summary and breakdown; the JSON report; `.csv`; and `DELETE /session`;
+  - `404` JSON for `DELETE /employees/1`, `.xml`, and an unknown path.
+- **Secrets:** no `.env`, `master.key`, `.pem`, or credential key is tracked (`git ls-files`); `backend/.env` and `config/master.key` are ignored; no hard-coded secret literals in tracked `app`/`config`/`lib`/`db`.
+
+**Security checklist (6.3).**
+
+| Rule / policy | Evidence | Result |
+|---|---|---|
+| Never expose secrets in source code | `git ls-files` and `git check-ignore` (above); secrets come from `ENV` (`database.yml`, `hr:create_user`) | Pass |
+| Enforce authorization on the server | Default-deny `BaseController`; `route_protection_test` (every route `401` signed out); one role, `403` unused (D17) | Pass |
+| Validate and sanitize user input | `QueryParams` (`400` on invalid page, sort, IDs, dates, `q` length); strong params; model validations and DB constraints; `LIKE` escaping (`q treats LIKE wildcards literally`); malformed JSON → `400`; the `by` dimension map | Pass |
+| Do not log salary or other sensitive data | `info`-level log tests: salary writes and employee update (`salary_records_test`), login (`sessions_test`), employee create and `q` searches (`log_redaction_test`); redacted model `inspect` (`security_config_test`) | Pass at `info`. Accepted: SQL at `debug` shows values (R3) |
+| Protect against mass assignment | `permit` allowlists; `unknown body fields are ignored` (employee `id`, `created_at`); salary `POST` ignores `employee_id`/`effective_to`; `PATCH` rejects date changes; Brakeman mass-assignment check clean | Pass |
+| Use secure session or token handling | `sessions_test` (bcrypt, `authenticate_by`, fixation reset, 30-minute and 8-hour expiry, `429`, `HttpOnly`, `SameSite=Lax`); `security_config_test` (`Secure` in production); CSRF on every state-changing route (`route_protection_test`) | Pass |
+| Avoid exposing employee data in error messages | Generic `404`/`500` envelopes; `422` never echoes values (employees, salary, duplicate email, N5 race); CSV errors are JSON | Pass |
+| Architecture §5 auth boundary | Default deny; only health and `GET`/`POST /session` are public (route walk); JSON-only (catch-all, forced format, `.xml` → `404`) | Pass |
+| Architecture §6 error contract | `error_handling_test`, N5 tests, CSV `422 export_too_large`, `invalid_csrf_token` | Pass |
+| Architecture §7 redaction; CSV safety | As above; the CSV column allowlist (no email), formula guard, `no-store` (`salary_report_csv_test`); analytics and report responses `no-store` | Pass |
+| Dependency vulnerabilities | Not scanned (N14 declined) | Accepted risk R2 |
+
+Brakeman note: it analyses controllers and models but not jbuilder views ("Templates: 2" are the generated HTML layouts). JSON views render no HTML, and the fields they output are covered by the contract tests above.
+
+**Accepted risks and skipped checks (for Phase 7 known limitations):**
+- **R1 Runtime support:** Ruby 3.2.0 is past end of life, and Rails 8.0.x support ends 2026-11-07. Acceptable for an assessment with synthetic data; upgrade before any real data (ADR 005; Brakeman ignores both).
+- **R2 No dependency audit:** N14 declined. Run `bundle-audit` or enable Dependabot before real data.
+- **R3 Debug SQL logging:** at `debug`, mysql2 writes SQL with inline values (including `LIKE '%<q>%'`). Production must stay at `info` (architecture §9). `prepared_statements: true` is optional and not adopted.
+- **R4 `config.hosts` unset:** host-header checks are off until deployment. Documented as a deployment prerequisite (architecture §9, N15).
+- **R5 CI inert:** `backend/.github/workflows/ci.yml` is not at the repo root, so GitHub never runs it (G3, N16). The quality commands are run manually and will be documented in Phase 7.
+- **R6 No real concurrency tests:** N6. The row lock, unique indexes, and the N5 `422` mapping are tested.
+
+**Phase 6 gate: passed on 2026-09-29.**
+- The backend suite (245 runs) passes on 5 seeds.
+- Critical API workflows are verified on the 10k synthetic dataset (6.2: measurements, HTTP timings, and 33 invariants).
+- The security checklist passes, with accepted risks R1–R6 recorded.
 
 **Phase gate:** Backend test suite and critical API workflows are verified with synthetic target-volume data.
 
@@ -842,6 +1036,11 @@ Notes:
 | 2026-09-29 | 5.1 | `app/queries/analytics/`: `Population` (shared filters, default `active`+`on_leave`, in-effect salary join, M2 `hired_on` rule), `Median` (window-function CTE, D21), `SummaryQuery`, `DistributionQuery` (exact comparison banding, empty bands, a single band when min = max), `BreakdownQuery` (fixed `by` column map, dimension and currency). 22 known-data tests in `test/queries/analytics/` plus a shared helper | `bin/rails test` ×5 seeds: 205 runs, 704 assertions, 0 failures; RuboCop 112 files clean; Brakeman 0 warnings; read-only timing and `EXPLAIN` on the 10k dev data (41–70 ms uncached) | Treated the request to implement 5.1 as approval of M1–M6, M17, M18. Owner: confirm M7–M16 before 5.2; API spec §8.2/§8.3 and design §7.3 wording (M2, M4) in 5.2 |
 | 2026-09-29 | 5.2 | `Api::AnalyticsFilters` concern (validated filters, `no_store`); `Analytics::Population#filters` echo; `Employee.matching(q)` scope extracted from `EmployeeSearchQuery` (M10); `SalaryReportQuery` (M9 sorts, preloads); `Api::V1::Analytics::{Summaries,Distributions,Breakdowns}Controller` and `Api::V1::Reports::SalariesController` with jbuilder views; routes under `analytics` and `reports`. 17 integration tests. API spec §8/§9, architecture §3, and database design §7.3 updated | `bin/rails test` ×5 seeds: 222 runs, 829 assertions, 0 failures; RuboCop 124 files clean; Brakeman 0 warnings; live smoke on :3108 (4 × `401` JSON) | Applied M7–M13 defaults; M11 meta written inline. Owner: confirm M14–M16 before 5.3 |
 | 2026-09-29 | 5.3 | CSV export on `GET /reports/salaries.csv`: `BaseController.allow_csv` (M14); report route constrained to `json|csv`; `SalaryReportCsv` in `app/exports/` (one query with `LIMIT cap + 1`, column allowlist, `money()` amounts, formula guard, UTF-8 BOM; M15, M16); controller `send_data` with the `as_of` filename, or `422 export_too_large`. 8 integration tests. Architecture §3/§4.4/§9, design §7.5, API spec §9.2, ADR 005 updated. Phase 5 gate passed | `bin/rails test` ×5 seeds: 230 runs, 886 assertions, 0 failures; RuboCop 126 files clean; Brakeman 0 warnings; live smoke on :3109 (`.csv` 401 JSON, `.xml` 404 JSON); dev-data export of 9,336 rows in about 300 ms | Applied M14–M16 defaults. Carried over to Phase 6: 10k timings from 5.1 and 5.3 (for 6.2); log-level decision (4.4); README health line (2.2); unstage the root-level `AD` entries in the git index |
+| 2026-09-29 | 6 (review) | Reviewed Phase 6 against the requirements NFRs and traceability, API spec §10/§12, architecture §5–§9, database design §4/§6/§12, ADRs 004–005, and the Phase 5 codebase and suite. Recorded decisions N1–N16, assumptions, dependencies, and risks. Expanded 6.1–6.3 into concrete tasks. Key findings: `RecordNotUnique` is unmapped (a race gives `500`, contrary to design §6); `q` search terms are logged in clear text at `info`; no route-walking 401/CSRF tests; no salary-history N+1 test; no dependency audit; `config.hosts` unset in production; Rails 8.0 support ends 2026-11-07 | Read-only: test inventory (230 runs, 31 files); grep of `app/` for constraint-error handling; production config; `filter_parameters` via runner; the Rails request-log source (`filtered_path`); dev DB counts (10,000 / 16,826 / 1 user). No code written; no tests run | Owner: approve N1–N16; choose an N9 option; approve the N14 network audit; unstage the root-level `AD` entries |
+| 2026-09-29 | 6 (N decisions) | Owner approved N1–N13, N15, and N16 as recommended (N9 option b: a temporary dev user); declined N14 (no dependency audit) | Plan update only | Missing dependency scan recorded as an accepted risk for Phase 7 known limitations |
+| 2026-09-29 | 6.1 | Requirement → test matrix (under 6.1). New `test/integration/api/v1/route_protection_test.rb` (default-deny walk over 21 route/verb pairs, CSRF walk over 8 state-changing routes, coverage guard). N5 fix: `Api::ErrorHandling` maps `RecordNotUnique` → `422 validation_failed` (known-index `details`, value never echoed), with create and update race tests. New tests: salary-history N+1, duplicate email via the API, generic `404` body. `count_queries` moved to `test_helper.rb`. Design §6, API spec §10, architecture §6 updated | `bin/rails test` ×5 seeds: 238 runs, 995 assertions, 0 failures; RuboCop 127 files clean; Brakeman 0 warnings; N5 mutation check (tests fail without the rescue) | Remaining gaps are assigned: `q` log filter and `Secure` cookie test → 6.3; 10k measurements → 6.2; no real concurrency tests (N6, accepted) |
+| 2026-09-29 | 6.2 | Measured 28 query-layer scenarios with `EXPLAIN ANALYZE` and 15 HTTP endpoints (temporary dev user, deleted) on the 10k demo data. Trial-migrated the 4 design §4 index candidates; kept `employees(hired_on)`, `(created_at)`, and `(employment_status, country_id)` per N11 (2.6–3.0× gains); dropped `(effective_from, effective_to)` (no gain). Migration `20260929100001_add_measured_indexes.rb`. N13 invariants: 33 checks over 3 populations, all holding. Database design v2.1: §4 indexes, new §13 measurements | `demo:verify` clean; `db:migrate`, `db:migrate:redo STEP=1` (`schema.rb` identical), `db:test:prepare`; `bin/rails test` ×5 seeds: 238 runs, 995 assertions, 0 failures; RuboCop 128 files clean; Brakeman 0 warnings; `User.count` 1 → 2 → 1 | Owner options: drop the now-redundant single `employment_status` index; the CSV is the only scenario over 100 ms (Ruby formatting, accepted) |
+| 2026-09-29 | 6.3 | N7: `/\Aq\z/` added to `filter_parameters`; new `log_redaction_test.rb` (employee create; `q` on the employee list, report, and CSV at `info`). N15: new `test/config/security_config_test.rb` (production `Secure` cookie via the re-evaluated initializer, `force_ssl`/`assume_ssl`/`info`, exact `q` filter, redacted `inspect`); `config.hosts` and never-`debug` documented as deployment prerequisites (architecture §7, §9); 4.4 log follow-up closed. Security checklist and accepted risks R1–R6 recorded under 6.3. Phase 6 gate passed | `bin/rails test` ×5 seeds: 245 runs, 1,040 assertions, 0 failures; RuboCop 130 files clean; Brakeman 0 warnings; N7 mutation check; live smoke on :3111 (health 200, 401 ×12, 404 ×3; server stopped); secrets check (nothing tracked) | Accepted risks R1–R6 go to Phase 7 known limitations; N14 declined |
 
 ## Current progress
 - **Phase 1** — Backend requirements and design — **Done (gate passed 2026-09-28)**
@@ -849,8 +1048,9 @@ Notes:
 - **Phase 3** — Domain models and persistence — **Done (gate passed 2026-09-28)**. 3.1, 3.2, 3.3 Done.
 - **Phase 4** — Employee and salary APIs — **Done (gate passed 2026-09-29)**. 4.1–4.4 Done.
 - **Phase 5** — Compensation analytics and report APIs — **Done (gate passed 2026-09-29)**. 5.1, 5.2, 5.3 Done.
-- **Next:** Phase 6 — Backend quality, performance, and regression (not yet reviewed)
-- **Overall status:** Phases 1–5 complete
+- **Phase 6** — Backend quality, performance, and regression — **Done (gate passed 2026-09-29)**. 6.1, 6.2, 6.3 Done. N14 declined (accepted risk R2).
+- **Next:** Phase 7 — Backend documentation and handoff (not yet reviewed)
+- **Overall status:** Phases 1–6 complete
 
 ## Future work
 Frontend phases will be added after the backend/API scope and implementation are complete or stable.
