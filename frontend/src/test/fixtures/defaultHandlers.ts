@@ -5,7 +5,8 @@ import {
   DEPARTMENTS,
 } from "@/test/fixtures/referenceData";
 
-// App-wide read endpoints that most signed-in screens touch: reference lists and an empty employee list.
+// App-wide read endpoints that most signed-in screens touch: reference lists, an empty employee list, and an
+// empty salary history.
 // Tests override them with server.use(...); any other unmocked request still fails (onUnhandledFrame: "error").
 export const defaultHandlers = [
   http.get("*/api/v1/countries", () => HttpResponse.json({ data: COUNTRIES })),
@@ -14,6 +15,9 @@ export const defaultHandlers = [
   ),
   http.get("*/api/v1/currencies", () =>
     HttpResponse.json({ data: CURRENCIES }),
+  ),
+  http.get("*/api/v1/employees/:id/salary_records", () =>
+    HttpResponse.json({ data: [] }),
   ),
   http.get("*/api/v1/employees", () =>
     HttpResponse.json({

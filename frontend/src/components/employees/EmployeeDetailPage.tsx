@@ -13,11 +13,12 @@ import {
   parseEmployeeId,
   useEmployee,
 } from "@/components/employees/useEmployees";
+import SalaryHistory from "@/components/salaries/SalaryHistory";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { isApiError } from "@/services/api";
 import type { EmployeeDetail } from "@/services/employee.types";
 
-// Employee detail (FRONTEND_PLAN.md T5, T6; API §6.2). Salary history and salary actions are added by F6.
+// Employee detail (FRONTEND_PLAN.md T5, T6; API §6.2). Salary history and salary actions: SalaryHistory (F6).
 
 function noticeFrom(state: unknown): string | null {
   return typeof state === "object" &&
@@ -167,6 +168,7 @@ export default function EmployeeDetailPage() {
           <CurrentSalary employee={data} />
         </Col>
       </Row>
+      <SalaryHistory employeeId={data.id} />
     </>
   );
 }
