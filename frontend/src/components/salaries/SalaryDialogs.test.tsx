@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { HttpResponse } from "msw";
 import { afterEach, describe, expect, it } from "vitest";
 import App from "@/App";
 import { setCsrfToken } from "@/services/api";
@@ -160,6 +161,44 @@ describe("Record salary change", () => {
       /must be after the latest salary record's start date/,
     );
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("shows only a generic message for a server error, keeping the dialog and what was typed", async () => {
+    const { section, user } = await renderPage({
+      writes: {
+        changeResponse: () =>
+          HttpResponse.json(
+            {
+              error: {
+                code: "internal_error",
+                message: "PG::Error at salary_records.rb:42",
+              },
+            },
+            { status: 500 },
+          ),
+      },
+    });
+    const { dialog } = await openChangeDialog(user, section);
+
+    await user.type(within(dialog).getByLabelText("Monthly amount"), "90000");
+    await user.type(
+      within(dialog).getByLabelText("Effective from"),
+      "2026-01-01",
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "Record change" }),
+    );
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Something went wrong. Please try again.",
+    );
+    expect(dialog).not.toHaveTextContent(/PG::|salary_records\.rb/);
+    expect(within(dialog).getByLabelText("Monthly amount")).toHaveValue(
+      "90000",
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "Record change" }),
+    ).toBeEnabled();
   });
 
   it("closes on Esc and on Cancel, returning focus to the button, and reopens empty", async () => {

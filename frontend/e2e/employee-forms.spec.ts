@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./support.ts";
 
 // F5.3 journeys on the real API (FRONTEND_PLAN.md T11). Creates only EMP-E2E-* employees; demo data is never
 // edited. Created employees stay in the development database (FD7; `bin/rails demo:reset` restores the demo data).

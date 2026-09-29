@@ -81,6 +81,7 @@ export default function EmployeeListPage() {
       key: "hired",
       header: "Hired on",
       sortField: "hired_on",
+      className: "text-nowrap", // a date never breaks across lines
       cell: (employee) => employee.hired_on ?? "—",
     },
   ];

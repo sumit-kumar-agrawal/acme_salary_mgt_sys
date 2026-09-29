@@ -1,5 +1,10 @@
-import { expect, test as setup } from "@playwright/test";
-import { AUTH_FILE, hrCredentials, signInThroughForm } from "./support.ts";
+import {
+  AUTH_FILE,
+  expect,
+  hrCredentials,
+  signInThroughForm,
+  test as setup,
+} from "./support.ts";
 
 // Sign in once per run and save the session (R12): the other tests reuse it instead of signing in again.
 setup("sign in once and save the session", async ({ page }) => {

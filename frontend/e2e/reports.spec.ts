@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./support.ts";
 
 // F7.2 journey on the real API and demo data (FRONTEND_PLAN.md V12). Read-only: the report is filtered and
 // sorted, compared with the API's own answer, and exported; the CSV must hold the same rows in the same order.

@@ -26,6 +26,7 @@ A single-page application in `frontend/` (monorepo, ADR 001), built with Vite. I
 | Forms | Plain controlled components; the API's `422` `details` are shown per field |
 | Unit and component tests | Vitest 5.0, jsdom 30, React Testing Library 16.3, user-event 14.6, jest-dom 7.0, MSW 3.0 |
 | End-to-end tests | Playwright 1.63, Chromium only (installed in F3.1; the browser lives in the user cache, not the repo), against the real Rails API and development database. One sign-in per run via a setup project; the saved session file (`playwright/.auth/`) is git-ignored |
+| Accessibility tests | @axe-core/playwright 4.13 (dev only; added in F8.2, FRONTEND_PLAN.md X5): WCAG 2.1 A/AA scans of every page and both salary dialogs in `e2e/accessibility.spec.ts`. Every E2E test also runs a privacy guard (no console errors or warnings, no search text in page URLs, empty browser storage; X2) |
 | Lint and format | ESLint 9.39 (typescript-eslint 8.71 `recommendedTypeChecked`, react-hooks, react-refresh, jsx-a11y), eslint-config-prettier, Prettier 3.9 (defaults). ESLint 9 is marked deprecated upstream, but jsx-a11y does not support ESLint 10 yet; move to 10 when it does |
 | Package manager | npm (lockfile committed) |
 

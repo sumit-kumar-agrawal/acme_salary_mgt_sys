@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./support.ts";
 
 // F7.1 journey on the real API and demo data (FRONTEND_PLAN.md V12). Read-only: the page's figures are
 // compared with the API's own answer for the same filters, fetched with the same signed-in session.

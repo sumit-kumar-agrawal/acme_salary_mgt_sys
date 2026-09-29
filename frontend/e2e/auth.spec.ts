@@ -1,5 +1,4 @@
-import { expect, test } from "@playwright/test";
-import { hrCredentials, signInThroughForm } from "./support.ts";
+import { expect, hrCredentials, signInThroughForm, test } from "./support.ts";
 
 // F3.1 journeys against the real API. At most 3 sign-ins per run, including setup (R13).
 

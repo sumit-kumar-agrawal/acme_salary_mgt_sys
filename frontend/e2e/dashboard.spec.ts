@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./support.ts";
 
 // Dashboard journey on the real API and demo data. Read-only: the home page's counts are compared with the
 // API's own answers (same session). Country counts are the breakdown's per-currency counts added up.

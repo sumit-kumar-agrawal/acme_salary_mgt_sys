@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./support.ts";
 
 // F6 journeys on the real API (FRONTEND_PLAN.md U2, U9). F6.1 is read-only on demo data.
 

@@ -1,5 +1,6 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { HttpResponse } from "msw";
 import { afterEach, describe, expect, it } from "vitest";
 import App from "@/App";
 import { setCsrfToken } from "@/services/api";
@@ -147,6 +148,31 @@ describe("EmployeeCreatePage", () => {
       /must have at most 0 decimal places for this currency/,
     );
     expect(currentLocation()).toBe("/employees/new");
+  });
+
+  it("shows only a generic message for a server error and keeps the form filled", async () => {
+    const { user } = await renderCreate({
+      createResponse: () =>
+        HttpResponse.json(
+          {
+            error: {
+              code: "internal_error",
+              message: "PG::Error at employees_controller.rb:12",
+            },
+          },
+          { status: 500 },
+        ),
+    });
+    await fillRequired(user);
+
+    await user.click(screen.getByRole("button", { name: "Create employee" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Something went wrong. Please try again.",
+    );
+    expect(screen.getByRole("main")).not.toHaveTextContent(/PG::|\.rb/);
+    expect(currentLocation()).toBe("/employees/new");
+    expect(screen.getByLabelText("Employee number")).not.toHaveValue("");
   });
 
   it("Cancel returns to the employee list", async () => {

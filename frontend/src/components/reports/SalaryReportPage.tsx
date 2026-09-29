@@ -65,6 +65,7 @@ const columns: Column<SalaryReportRow>[] = [
   {
     key: "from",
     header: "Effective from",
+    className: "text-nowrap", // a date never breaks across lines
     cell: (row) => row.effective_from,
   },
 ];

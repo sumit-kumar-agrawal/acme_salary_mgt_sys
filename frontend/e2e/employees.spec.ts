@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./support.ts";
 
 // F5 journeys on the real API and the 10k demo data (FRONTEND_PLAN.md T11). Read-only: nothing is changed.
 

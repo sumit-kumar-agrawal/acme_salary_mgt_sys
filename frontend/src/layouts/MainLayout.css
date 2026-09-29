@@ -31,3 +31,10 @@
 .app-section-card .table {
   margin-bottom: 0;
 }
+
+/* Tables scroll sideways only. Bootstrap's overflow-x: auto also makes overflow-y auto, and the table's
+   1px bottom border then made every table a (vertically) scrollable region, which keyboard users cannot
+   reach when it holds no links (axe scrollable-region-focusable, FRONTEND_PLAN.md F8.2). */
+.app-main .table-responsive {
+  overflow-y: hidden;
+}
