@@ -964,17 +964,181 @@ Brakeman note: it analyses controllers and models but not jbuilder views ("Templ
 ## Phase 7 — Backend documentation and handoff
 **Goal:** Make the backend easy to run, inspect, and extend when frontend work begins.
 
+### Phase 7 review findings (2026-09-29)
+
+Inputs:
+- `docs/requirements.md` (v1.1, §8 acceptance, §11 traceability);
+- `docs/architecture.md` (v2.2), `docs/database-design.md` (v2.1), `docs/api-specification.md` (v2.0), ADRs 001–005;
+- root and backend `README.md`, `CLAUDE.md`, `.claude/rules/*`, `PROJECT_DEV_PLAN.md`, `backend/.env.example` (names only);
+- the codebase and git state after the Phase 6 commit (`707ff61`).
+
+No code written. Observed:
+- **Backend state:** Phases 1–6 are done and committed. The suite has 245 runs and passes on 5 seeds; RuboCop and Brakeman are clean. Accepted risks R1–R6 are recorded under 6.3.
+- **Root `README.md` is stale in places:**
+  - the status line still says "Phase 2";
+  - the health line says `GET /api/v1/health` "arrives in task 2.2" (a follow-up carried since 2.2);
+  - step 3 still says to check H3 "before the first run" (H3 was applied in 2.2);
+  - there is no step to run `bin/rails db:migrate` on an existing checkout (6.2 added a migration);
+  - there are no MySQL commands to create the recommended dedicated user and databases;
+  - there is no API overview, sign-in walkthrough, or known-limitations section.
+- `backend/README.md` only points to the root README, as decided in 2.1.
+- **Stale design-doc details:**
+  - architecture §3's code layout names `lib/tasks/hr_user.rake` (the real file is `hr.rake`, next to `demo.rake`), lists concerns without their `api/` folder, and omits `not_found_controller.rb` and `lib/demo/`;
+  - API spec §11 gives the reference-data endpoints phase 4.3 (they shipped in 4.2, L1);
+  - requirements §11 still has a "Planned tests" column, while the actual tests now exist (6.1 coverage matrix).
+- **Doc headers and versions:** the headers still say "Approved design/contract for implementation". The API spec is v2.0 and architecture v2.2, although both were clarified in Phases 4–6 without version bumps or a changelog.
+- **Frontend handoff:** the API spec is the contract. There is no client-oriented summary (session + CSRF sequence, error handling, pagination, money as strings, CSV download, same-site or dev-proxy requirement), no OpenAPI file, and no curl walkthrough. `PROJECT_DEV_PLAN.md` holds the only frontend phases (2.3, 2.4) and is marked superseded for backend work.
+- **Generated but unused (G1/G3, kept by the owner):**
+  - importmap, Turbo, Stimulus, `app/javascript`, HTML layouts, PWA views, mailers, and jobs;
+  - Solid Queue (no jobs);
+  - Kamal, Thruster, and the Dockerfile;
+  - `backend/.github/workflows/ci.yml` (inert, R5).
+- **Repository hygiene:** 30 accidental root-level `AD` entries are still staged. `.idea/` IDE files are tracked in git.
+- **No out-of-scope code:** a scan of `app/`, `lib/`, and routes for payroll, tax, disbursement, FX, and AI terms found nothing.
+
+#### A. Missing decisions
+
+**Owner decisions (2026-09-29):** P1–P13 approved as recommended, including the P2 fix policy (report first; Critical/High only with approval) and P9 (the clean clone may copy `backend/.env` without reading it).
+
+| ID | Decision | Recommendation | Needed by |
+|---|---|---|---|
+| P1 | **7.1 review method and output.** | Read every file in `app/`, `lib/`, `config/` (non-generated), `db/migrate`, and the routes against CLAUDE.md, `.claude/rules/*`, and the four docs. Report findings in a table by severity (Critical / High / Medium / Low), each with a `file:line` and evidence. Reuse the 6.1 matrix and 6.3 checklist rather than repeating them. | 7.1 |
+| P2 | **Fix policy for 7.1 findings.** | Per the 7.1 prompt, report first. Fix Critical and High only after owner approval, with tests. Low findings and doc-only corrections can be fixed directly. Medium findings are listed for the owner to decide. Nothing that changes the API contract without approval. | 7.1 |
+| P3 | **Generated but unused code (G1/G3).** | Keep, as the owner decided. List it in the README under "Generated files not used by the API", so reviewers aren't confused. | 7.2 |
+| P4 | **Redundant `index_employees_on_employment_status`** (6.2 owner option). | Keep: no measured harm at 10k rows, and removal wasn't measured. Record it under known limitations as an optional clean-up. | 7.1 |
+| P5 | **Where setup docs live.** | The root `README.md` stays the single setup guide (2.1). Fix the stale items above, and add these sections: <br>- **MySQL setup:** example `CREATE DATABASE`/`CREATE USER`/`GRANT` statements, with placeholder values only; <br>- **Updating an existing checkout:** `bin/rails db:migrate` and `db:test:prepare`; <br>- **API overview:** an endpoint table, conventions, and links to the spec; <br>- **Sign-in walkthrough:** curl with a cookie jar and the CSRF header; <br>- **Known limitations** (P8); <br>- **Troubleshooting:** RVM gemset, `json < 3`, single-process tests (K1). | 7.2 |
+| P6 | **Frontend-ready API documentation.** | No OpenAPI or Swagger (it would add tooling or gems; the Markdown spec is the contract). Add API spec **§13 "Client integration notes"**: <br>- the session and CSRF sequence, and same-site or dev-proxy use; <br>- handling `401`/`422`/`429`; <br>- the error envelope and `details`; <br>- pagination `meta`; <br>- money as strings with `currency_code`, and no cross-currency totals; <br>- dates in UTC; <br>- CSV download and its `422`. <br>Bump the spec to **v2.1**, with a changelog of the Phase 4–6 clarifications. | 7.2 |
+| P7 | **Doc headers, versions, and stale details.** | Set each design doc's status to "Implemented through Phase 6 (2026-09-29)" and bump versions: requirements 1.2, architecture 2.3, database design 2.2 (if changed), API 2.1. Each gets a short changelog. Fix architecture §3 to match the real tree and API §11's phase numbers. In requirements §11, change "Planned tests" to "Tests", naming the actual test files. | 7.2 |
+| P8 | **Known limitations (one list).** | In the README, linking to the plan: <br>- the accepted risks R1–R6 (6.3); <br>- no currency conversion; <br>- only current country, department, and status (no history); <br>- no mid-history salary inserts, and a future record's start date can't be corrected; <br>- one HR user with no roles; <br>- CSV synchronous and capped at 10,000 rows; <br>- OFFSET paging, and descending sorts are a filesort; <br>- history plus timestamps as the only audit trail (D5); <br>- single-process tests (K1); the `json < 3` pin; <br>- demo tasks are development-only; <br>- measured timings are laptop observations, not SLAs. | 7.2 |
+| P9 | **Clean-clone verification** (the 7.2 acceptance: "a reviewer can run the backend"). | With owner approval: <br>- Claude clones `HEAD` into its scratchpad and copies `backend/.env` there without reading it; <br>- it runs `bundle check`, `bin/rails db:test:prepare`, `bin/rails test`, and `bin/rails server` on a spare port (health `200`, a signed-out `401`); <br>- then it deletes the clone. <br>It uses the existing databases only; creating databases and users stays the owner's step, per the standing rule. The owner may also do a from-scratch walkthrough. | 7.2 |
+| P10 | **Repository hygiene before handoff.** | Owner: <br>- unstage the 30 root-level `AD` entries (`git restore --staged Gemfile Gemfile.lock Gemfile.lock.bck app config db test`); <br>- stop tracking `.idea/` (`git rm -r --cached .idea` plus a root `.gitignore` entry). <br>Claude doesn't run git commands (standing rule). | 7.2 |
+| P11 | **`CLAUDE.md` Commands section.** | Add the `db:seed`, `demo:seed`/`demo:verify`, `hr:create_user`, and `db:migrate` commands, so later sessions (including frontend planning) can run the app. Leave the rest of `CLAUDE.md` unchanged. | 7.2 |
+| P12 | **Frontend handoff pointer.** | No new handoff document. Expand the plan's **"Future work"** section with the frontend prerequisites: <br>- same-site serving or a dev proxy to `:3000` (ADR 004); <br>- the CSRF flow; <br>- the `401` redirect; <br>- currency-safe display; <br>- links to API §13 and the known limitations. | 7.2 |
+| P13 | **Final regression after the doc changes.** | `bin/rails test` ×5 seeds, RuboCop, Brakeman, and a live signed-out smoke (health, `401`, catch-all `404`), recorded at the end of 7.2, even if 7.1 changes nothing. | 7.2 |
+
+#### B. Assumptions
+- Backend and docs only. No frontend code, new features, new gems, or Docker work (Docker stays deferred).
+- The docs describe what is implemented and tested. Where a doc and the code disagree, the code (confirmed by tests) wins, unless 7.1 finds the code is wrong (P2).
+- A reviewer uses macOS or Linux with RVM (or another Ruby manager), MySQL 8.0.16 or later, and can create a MySQL user and databases.
+- The owner keeps making all commits and creating databases and users.
+
+#### C. Dependencies
+
+| Dependency | Blocks | Owner |
+|---|---|---|
+| ~~Approval of P1–P13~~ Approved 2026-09-29 | 7.1 | Project owner |
+| Owner approval of any Critical/High fix found in 7.1 (P2) | 7.1 close | Project owner |
+| 7.1 findings resolved or accepted | 7.2 (the docs must describe the final code) | — |
+| Git hygiene (P10) | A clean handoff commit | Project owner |
+| Existing dev and test databases, and `backend/.env` (P9) | 7.2 clean-clone check | Project owner |
+
+#### D. Risks
+
+| Risk | Likelihood / impact | Mitigation |
+|---|---|---|
+| Docs describe behaviour the code doesn't have (drift) | Medium / High | 7.1 cross-checks the routes (`bin/rails routes`) against API §11, and the rules against the code. Each doc change cites a test or file |
+| A reviewer can't install Ruby 3.2.0 (end of life; OpenSSL 3 builds on newer macOS) | Medium / High | README troubleshooting notes; R1 recorded; note that Ruby needs OpenSSL 1.1/3 build flags if `rvm install` fails. The upgrade itself is out of scope |
+| A reviewer lacks the owner's RVM gemset (`salary-mgn-3.2.0`) | High / Low | README uses a plain `rvm use 3.2.0` plus `bundle install`; the gemset stays an owner-local detail |
+| Fresh MySQL setup unclear (user and grants) | Medium / Medium | P5 MySQL setup section with placeholder credentials |
+| The 7.1 review becomes a refactor (scope creep) | Medium / Medium | P2 fix policy; report first |
+| Frontend developers misread money or currency rules | Medium / High | P6 §13 client notes: money strings, per-currency totals only |
+| Handoff commit includes stray root files or IDE settings | Medium / Low | P10 owner hygiene |
+| Rails 8.0 support ends 2026-11-07 (R1) | Certain / Medium | Listed prominently in known limitations with the upgrade recommendation |
+
 ### 7.1 Code and scope review
-**Prompt:** `Review the Rails backend against CLAUDE.md, docs/requirements.md, architecture, database design, and API specification. Check correctness, security, currency handling, salary history, query behavior, tests, and scope discipline. Report findings by severity with file references before making nontrivial changes.`
+**Prompt:** `Per P1, P2, and P4: review every non-generated file in backend/app, lib, config, db/migrate, and the routes against CLAUDE.md, .claude/rules/*, requirements, architecture, database design, and the API spec. Check correctness, security, currency handling, salary history, query behaviour, tests, and scope discipline. Report findings by severity with file:line and evidence before making nontrivial changes; fix Low and doc-only items directly; ask before fixing Critical or High.`
+**Tasks:**
+1. ~~Owner: approve P1–P13.~~ Approved 2026-09-29.
+2. ~~Contract cross-check: routes against API §11; `.claude/rules/*` against the code.~~ Done 2026-09-29. The routes match API §11 (21 route/verb pairs, including 2 undocumented `PUT` aliases, F3). The backend rules check is below; the security and testing rules reuse the 6.3 checklist and the 6.1 matrix.
+3. ~~File-by-file review.~~ Done 2026-09-29: all 78 non-generated files in `app/` (controllers, concerns, models, services, queries, exports, helpers, views), `config/` (application, environments, custom initializers, database, routes, brakeman.ignore), `db/migrate/`, and `lib/` (reference data, demo seeder, integrity check, rake tasks).
+4. ~~Scope check.~~ Done 2026-09-29: no out-of-scope features (requirements §6) and no unused custom code. Generated G1/G3 files are exempt (P3).
+5. ~~Findings table; apply Low and doc-only fixes; ask before Critical/High.~~ Done 2026-09-29: no Critical or High findings; 1 Medium (F1) awaits the owner; 1 Low fixed (F2); doc items passed to 7.2.
+6. ~~Tests, RuboCop, Brakeman (code changed: F2).~~ Done 2026-09-29.
+
 **Deliverables:** Review findings and resolutions.
-**Acceptance:** No known critical issue remains; deviations and limitations are documented.
-**Status:** Not Started
+**Acceptance:**
+- No known Critical or High issue remains unresolved or unaccepted.
+- Every deviation from the docs is either fixed or recorded for 7.2.
+- Scope discipline is confirmed.
+
+**Status:** Done (2026-09-29). No Critical or High findings. F1 (Medium) was fixed after owner approval (2026-09-29). `bin/rails test` 245 runs, 1,040 assertions, 0 failures on 5 seeds; RuboCop 130 files clean; Brakeman 0 warnings (2 ignored).
+
+**Findings (7.1).**
+
+| ID | Severity | Where | Finding and evidence | Resolution |
+|---|---|---|---|---|
+| F1 | **Medium** | `app/controllers/concerns/api/query_params.rb:17` (`page_param`, no maximum); `concerns/api/pagination.rb:13` | A very large `page` returns **`500 internal_error`** instead of a `400`. Once `(page − 1) × per_page` exceeds MySQL's unsigned 64-bit `OFFSET`, the SQL is invalid. A probe (throwaway test in the scratchpad, rescue enabled): `page=99999999999999999999` and `page=10^18` → `500` on `/employees` and `/reports/salaries`; `page=10^17` → `200`, empty. The envelope is generic, so no data leaks | **Fixed (owner approved 2026-09-29):** `Api::QueryParams::MAX_PAGE = 1_000_000`, so a larger `page` → `400`, `details.page` "must be at most 1000000". Tests: a `QueryParams` unit test (cap, 10^18, 10^20) and endpoint cases in `employees_test` and `salary_report_test`. Mutation check: without the cap, both endpoint tests error with the SQL failure. API §2.3 and the §14 changelog updated; the README limitation removed |
+| F2 | Low | `lib/demo/integrity_check.rb:61` | `demo:verify` printed `employees_without_salary` (employees with no salary record at all, 95) under the same name as the analytics field (no salary in effect on `as_of`, 93) | **Fixed:** renamed the report key to `employees_without_salary_records`, with a comment. `test/lib` 17 runs pass; `demo:verify` output checked. The API field is unchanged |
+| F3 | Low (doc) | `config/routes.rb` (`resources … only: %i[… update]`) | Rails also routes `PUT` to `update` for employees and salary records; API §11 lists only `PATCH`. `PUT` behaves identically, and the route-protection walk covers it (`401` and CSRF) | **7.2:** document "`PUT` is accepted as an alias of `PATCH`" in API §11 |
+| F4 | Low (doc) | `concerns/api/authentication.rb:43–54` | Every authenticated request, including `GET /session`, refreshes the 30-minute idle timer, so a client polling `/session` keeps the session alive until the 8-hour absolute limit. This is intended behaviour but undocumented for clients | **7.2:** state it in API §13 client notes |
+| F5 | Low (doc) | `config/environments/production.rb` (Solid Cache), `sessions_controller.rb:7` | In production the login `rate_limit` counts in Solid Cache, so the cache tables (`db/cache_schema.rb`) must exist in the production database (`db:prepare`); otherwise the limit fails | **7.2:** add it to the architecture §9 deployment prerequisites |
+| F6 | Info | `app/services/salaries/change_service.rb:46` (`close_period` → `update!`) | If the previous record failed validation while being closed, `RecordInvalid` would surface as a `422` naming that record's fields. Unreachable through the API: I13 is enforced both ways, currencies are static, and periods are service-controlled | No change |
+| F7 | Info | `db/schema.rb` (`index_employees_on_employment_status`) | Redundant with the `(employment_status, country_id)` composite from 6.2 | Kept (P4); listed as an optional clean-up in the known limitations (7.2) |
+| F8 | Doc drift | `docs/architecture.md` §3; `docs/api-specification.md` §11; `docs/requirements.md` §11; doc headers | Stale code layout (`hr_user.rake`, missing `not_found_controller.rb`, `concerns/api/`, `lib/demo/`); reference-data phase 4.3 (should be 4.2); "Planned tests"; versions not bumped | **7.2** (P7) |
+
+**Backend rules check (`.claude/rules/backend.md`).** Every rule passes:
+- **Rails conventions, RESTful:** resources with singular analytics resources (M7); no custom actions.
+- **Thin controllers:** they parse, call a service or query, and render.
+- **ActiveRecord:** used throughout; raw SQL only for the median CTE and band counts, built from relations with bound values.
+- **JSON builder:** jbuilder for every JSON response; the CSV goes through `SalaryReportCsv` (`app/exports`, 5.3).
+- **Service objects:** for multi-step writes (`Employees::CreateService`, `Salaries::ChangeService`, `Salaries::CorrectionService`).
+- **Query objects:** for analytics, reports, and search.
+- **Transactions:** every salary write, with a row lock.
+- **Constraints plus validations:** I1–I13 (design §5).
+- **Pagination:** employee list and report.
+- **Indexes:** justified per query (design §4, §13).
+- **N+1:** tests for the employee list, report, and history.
+- **Strong parameters and concerns:** `permit` allowlists; `Api::*` concerns shared across controllers.
+- **Request and model tests:** 245 runs.
+- **Dependencies:** all justified in ADR 005.
+
+Currency safety (every aggregate grouped by `currency_code`; the 6.2 invariants) and salary-history invariants (services, DB guards, `demo:verify` 0 violations) are confirmed.
 
 ### 7.2 Backend setup and API documentation
-**Prompt:** `Finalize backend README and docs with Ruby/Rails prerequisites, environment setup, database creation/migrations, seed loading, test commands, health endpoint, authentication approach, API overview, and known limitations. Ensure the API contract is ready for a future frontend phase. Do not implement frontend code.`
+**Prompt:** `Per P3 and P5–P13: update the root README (status, health, MySQL setup, updating a checkout, API overview, curl sign-in walkthrough, known limitations, troubleshooting, unused generated files), API spec v2.1 with §13 client integration notes and a changelog, doc headers and versions and stale details (architecture §3, API §11, requirements §11), CLAUDE.md Commands, and the plan's Future work. Verify with a clean clone (P9) and a final regression (P13). No frontend code.`
+**Tasks:**
+1. ~~Root `README.md` per P5 and P8 (and P3's list of unused generated files).~~ Done 2026-09-29. It now has:
+   - a current status line and the real health endpoint;
+   - MySQL user and grant setup (placeholders only) and `.env` from `.env.example`;
+   - `db:prepare` plus `db:test:prepare`, and "Updating an existing checkout" (`db:migrate`);
+   - "Using the API" (endpoint table, conventions, curl sign-in walkthrough);
+   - test layout and count; troubleshooting;
+   - known limitations (R1–R6, design limits, unused generated files; F1 was listed until it was fixed).
+   The stale H3 and "arrives in task 2.2" lines are gone. All relative links resolve.
+2. ~~API spec v2.1: §13 client integration notes and changelog (P6); fix §11 phases.~~ Done 2026-09-29. §11: reference data is phase 4.2, and the `PUT` alias is documented (F3). New §13: hosting and cookies, sign-in and CSRF (new token after sign-in), session lifetime (F4 keep-alive), errors, lists, money/currency/dates, CSV. New §14 changelog.
+3. ~~Doc headers, versions, and changelogs (P7); architecture §3; requirements §11.~~ Done 2026-09-29:
+   - requirements v1.2 (§11 names the implemented endpoints and actual test files, with corrected phases; §12 changelog);
+   - architecture v2.3 (§3 matches the real tree: `hr.rake`/`demo.rake`, `not_found_controller.rb`, `concerns/api/`, `helpers/api/formatting_helper.rb` instead of a `_money` partial, `lib/demo/`; §9 adds the Solid Cache prerequisite (F5); §11 changelog);
+   - database design v2.2 (§14 changelog);
+   - API spec v2.1.
+4. ~~`CLAUDE.md` Commands (P11); plan "Future work" (P12).~~ Done 2026-09-29.
+5. ~~Clean-clone verification (P9).~~ Done 2026-09-29; see the status.
+6. ~~Final regression (P13); close the Phase 7 gate; owner hygiene reminder (P10).~~ Done 2026-09-29.
+
 **Deliverables:** Backend setup guide and handoff-ready API documentation.
-**Acceptance:** A reviewer can run the backend, load synthetic data, execute tests, and understand the API without frontend code.
-**Status:** Not Started
+**Acceptance:**
+- A reviewer can follow the README to set up, load synthetic data, run the tests and the server, and sign in with curl (proved by the clean clone and the walkthrough).
+- The API spec lets a frontend developer integrate without reading backend code.
+- The known limitations are complete.
+- The final regression passes.
+
+**Status:** Done (2026-09-29).
+- **Clean clone (P9):**
+  - `git clone` of `HEAD` (`707ff61`) into Claude's scratchpad; `backend/.env` copied without being read;
+  - Ruby 3.2.0; `bundle check` satisfied; `bin/rails db:test:prepare`; `bin/rails test` → 245 runs, 1,040 assertions, 0 failures;
+  - `bin/rails server` on :3112: health `200` `{"data":{"status":"ok","database":"ok"}}`, `GET /employees` signed out `401`;
+  - server stopped, clone deleted, port free. Existing databases only; no database or user created.
+- **Final regression (P13), on the working tree including the 7.1 and 7.2 edits:**
+  - `bin/rails test` ×5 seeds: 245 runs, 1,040 assertions, 0 failures;
+  - RuboCop 130 files clean; Brakeman 0 warnings (2 ignored);
+  - live on :3113: health `200`; `/employees`, `/analytics/summary`, and `/reports/salaries.csv` signed out `401` JSON; an unknown path `404` JSON; server stopped.
+
+Notes:
+- **F1 (Medium) fixed after 7.2** on owner approval (2026-09-29); see the 7.1 findings and the completion log.
+- The curl walkthrough wasn't run with the HR credentials (Claude doesn't have them). It follows the sign-in and CSRF sequence verified by `sessions_test.rb`, `route_protection_test.rb`, and the 6.2 HTTP script (the same `GET /session` → `POST /session` → cookie jar steps).
+- **P10 (owner):** before the handoff commit, unstage the 30 root-level `AD` entries (`git restore --staged Gemfile Gemfile.lock Gemfile.lock.bck app config db test`) and stop tracking `.idea/` (`git rm -r --cached .idea`, plus `.idea/` in the root `.gitignore`).
+
+**Phase 7 gate: passed on 2026-09-29.** The backend is independently runnable (clean clone), tested (245 runs, 5 seeds), documented (README, API spec v2.1 with client notes, updated design docs), and ready for a separately planned frontend phase ("Future work"). Open item: P10 (owner git hygiene). F1 fixed 2026-09-29.
 
 **Phase gate:** Backend is independently runnable, tested, documented, and ready for a separately planned frontend phase.
 
@@ -1041,6 +1205,11 @@ Brakeman note: it analyses controllers and models but not jbuilder views ("Templ
 | 2026-09-29 | 6.1 | Requirement → test matrix (under 6.1). New `test/integration/api/v1/route_protection_test.rb` (default-deny walk over 21 route/verb pairs, CSRF walk over 8 state-changing routes, coverage guard). N5 fix: `Api::ErrorHandling` maps `RecordNotUnique` → `422 validation_failed` (known-index `details`, value never echoed), with create and update race tests. New tests: salary-history N+1, duplicate email via the API, generic `404` body. `count_queries` moved to `test_helper.rb`. Design §6, API spec §10, architecture §6 updated | `bin/rails test` ×5 seeds: 238 runs, 995 assertions, 0 failures; RuboCop 127 files clean; Brakeman 0 warnings; N5 mutation check (tests fail without the rescue) | Remaining gaps are assigned: `q` log filter and `Secure` cookie test → 6.3; 10k measurements → 6.2; no real concurrency tests (N6, accepted) |
 | 2026-09-29 | 6.2 | Measured 28 query-layer scenarios with `EXPLAIN ANALYZE` and 15 HTTP endpoints (temporary dev user, deleted) on the 10k demo data. Trial-migrated the 4 design §4 index candidates; kept `employees(hired_on)`, `(created_at)`, and `(employment_status, country_id)` per N11 (2.6–3.0× gains); dropped `(effective_from, effective_to)` (no gain). Migration `20260929100001_add_measured_indexes.rb`. N13 invariants: 33 checks over 3 populations, all holding. Database design v2.1: §4 indexes, new §13 measurements | `demo:verify` clean; `db:migrate`, `db:migrate:redo STEP=1` (`schema.rb` identical), `db:test:prepare`; `bin/rails test` ×5 seeds: 238 runs, 995 assertions, 0 failures; RuboCop 128 files clean; Brakeman 0 warnings; `User.count` 1 → 2 → 1 | Owner options: drop the now-redundant single `employment_status` index; the CSV is the only scenario over 100 ms (Ruby formatting, accepted) |
 | 2026-09-29 | 6.3 | N7: `/\Aq\z/` added to `filter_parameters`; new `log_redaction_test.rb` (employee create; `q` on the employee list, report, and CSV at `info`). N15: new `test/config/security_config_test.rb` (production `Secure` cookie via the re-evaluated initializer, `force_ssl`/`assume_ssl`/`info`, exact `q` filter, redacted `inspect`); `config.hosts` and never-`debug` documented as deployment prerequisites (architecture §7, §9); 4.4 log follow-up closed. Security checklist and accepted risks R1–R6 recorded under 6.3. Phase 6 gate passed | `bin/rails test` ×5 seeds: 245 runs, 1,040 assertions, 0 failures; RuboCop 130 files clean; Brakeman 0 warnings; N7 mutation check; live smoke on :3111 (health 200, 401 ×12, 404 ×3; server stopped); secrets check (nothing tracked) | Accepted risks R1–R6 go to Phase 7 known limitations; N14 declined |
+| 2026-09-29 | 7 (review) | Reviewed Phase 7 against requirements (§8 acceptance, §11 traceability), architecture v2.2, database design v2.1, API spec v2.0, ADRs, READMEs, CLAUDE.md, `.env.example` (names only), and the codebase after commit `707ff61`. Recorded decisions P1–P13, assumptions, dependencies, and risks. Expanded 7.1–7.2 into concrete tasks. Key findings: stale README (Phase 2 status, health line, H3 note, no `db:migrate`, MySQL, API overview, or known-limitations sections); architecture §3 names `hr_user.rake`; API §11 reference-data phase 4.3 (should be 4.2); doc versions not bumped since Phases 4–6; no client integration notes for the frontend; 30 root-level `AD` entries still staged; `.idea/` tracked; no out-of-scope code | Read-only: doc headers and grep for stale markers; `git log`/`git status`; `git ls-files` (IDE files); scope grep over `app/`, `lib/`, and routes; `lib/tasks` listing. No code written; no tests run | Owner: approve P1–P13; P10 git hygiene |
+| 2026-09-29 | 7 (P decisions) | Owner approved P1–P13 as recommended | Plan update only | Owner: P10 git hygiene before the handoff commit |
+| 2026-09-29 | 7.1 | Reviewed all 78 non-generated backend files, the routes, and `.claude/rules/*` against the docs. Findings F1–F8: no Critical or High; **F1 Medium** (a huge `page` → `500`, the `OFFSET` overflows MySQL's 64-bit limit) awaits the owner; **F2 Low fixed** (`demo:verify` label renamed to `employees_without_salary_records`); F3–F5 doc items (`PUT` alias, session keep-alive, Solid Cache prerequisite) and F8 doc drift passed to 7.2; F6/F7 informational. Scope and currency checks pass | Throwaway probe test (scratchpad, deleted) confirmed F1 on `/employees` and `/reports/salaries`; read-only runner probe of huge IDs (`400`/`404`, fine); `bin/rails test` ×5 seeds: 245 runs, 1,040 assertions, 0 failures; RuboCop 130 files clean; Brakeman 0 warnings | Owner: approve or decline the F1 fix (cap `page` at 1,000,000 → `400`) |
+| 2026-09-29 | 7.2 | Root README rewritten per P5/P8/P3; API spec v2.1 (§11 phase and `PUT` alias, §13 client integration notes, §14 changelog); requirements v1.2 (§11 with actual test files), architecture v2.3 (§3 real code layout, §9 Solid Cache prerequisite, changelog), database design v2.2 (changelog); `CLAUDE.md` Commands; plan "Future work" with the frontend prerequisites. Phase 7 gate passed | Clean clone of `707ff61` (`.env` copied unread): `bundle check`, `db:test:prepare`, 245 runs 0 failures, health 200, signed-out 401, clone deleted. Final regression: `bin/rails test` ×5 seeds 245 runs, 1,040 assertions, 0 failures; RuboCop 130 clean; Brakeman 0 warnings; live smoke on :3113. README links checked | Open: F1 (owner decision, documented as a known limitation); P10 owner git hygiene before the handoff commit |
+| 2026-09-29 | 7.1 F1 fix | Owner approved F1. `Api::QueryParams::MAX_PAGE = 1_000_000`: a larger `page` now returns `400` (was `500` from an overflowing MySQL `OFFSET`). A `QueryParams` unit test and endpoint cases in `employees_test` and `salary_report_test`. API spec §2.3 and §14; README (limitation removed, test count) and requirements §11 test count updated | Mutation check (without the cap, the endpoint tests error); `bin/rails test` ×5 seeds: 246 runs, 1,054 assertions, 0 failures; RuboCop 130 files clean; Brakeman 0 warnings | Open: P10 owner git hygiene |
 
 ## Current progress
 - **Phase 1** — Backend requirements and design — **Done (gate passed 2026-09-28)**
@@ -1049,8 +1218,15 @@ Brakeman note: it analyses controllers and models but not jbuilder views ("Templ
 - **Phase 4** — Employee and salary APIs — **Done (gate passed 2026-09-29)**. 4.1–4.4 Done.
 - **Phase 5** — Compensation analytics and report APIs — **Done (gate passed 2026-09-29)**. 5.1, 5.2, 5.3 Done.
 - **Phase 6** — Backend quality, performance, and regression — **Done (gate passed 2026-09-29)**. 6.1, 6.2, 6.3 Done. N14 declined (accepted risk R2).
-- **Next:** Phase 7 — Backend documentation and handoff (not yet reviewed)
-- **Overall status:** Phases 1–6 complete
+- **Phase 7** — Backend documentation and handoff — **Done (gate passed 2026-09-29)**. 7.1, 7.2 Done; F1 fixed. Open: P10 (owner git hygiene).
+- **Next:** owner does P10 and commits; then frontend planning (see "Future work")
+- **Overall status:** Backend Phases 1–7 complete
 
 ## Future work
-Frontend phases will be added after the backend/API scope and implementation are complete or stable.
+Frontend phases will be added after the backend/API scope and implementation are complete or stable. The backend is ready for them (Phase 7). Prerequisites and pointers for the frontend plan:
+- **Contract:** `docs/api-specification.md` v2.1, especially §13 (client integration notes) and §10 (error codes).
+- **Hosting:** serve the React app same-site with the API, or proxy `/api` to `http://localhost:3000` in development. No CORS is configured, and the session cookie is `SameSite=Lax` (ADR 004); a cross-origin setup needs an ADR 004 amendment.
+- **Auth flow:** `GET /session` for the token → `POST /session` → store the **new** `csrf_token` → send `X-CSRF-Token` on every write. Treat `401` as signed out; handle `429` on sign-in.
+- **Display rules:** show money strings as given, with `currency_code`, labelled monthly. Never total across currencies. Use the record `status` and `editable` flags rather than computing them from dates.
+- **Known limitations** that affect the UI (README): analytics use current country, department, and status; the CSV is capped at 10,000 rows (`422 export_too_large` as JSON); there is one HR user.
+- **Tooling already decided:** React functional components with Bootstrap, React Testing Library, Playwright (`CLAUDE.md`, `.claude/rules/frontend.md`). `PROJECT_DEV_PLAN.md` 2.3–2.4 hold the earlier frontend foundation outline.

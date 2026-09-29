@@ -58,7 +58,8 @@ module Demo
         employees_by_status: Employee.group(:employment_status).count.sort.to_h,
         employees_by_country: Employee.joins(:country).group("countries.code").count.sort.to_h,
         current_salaries_by_currency: in_effect.group(:currency_code).count.sort.to_h,
-        employees_without_salary: Employee.where.missing(:salary_records).count,
+        # No salary record at all; the analytics field employees_without_salary is "none in effect on as_of".
+        employees_without_salary_records: Employee.where.missing(:salary_records).count,
         records_per_employee: SalaryRecord.group(:employee_id).count.values.tally.sort.to_h,
         scheduled_records: SalaryRecord.where("effective_from > ?", as_of).count
       }

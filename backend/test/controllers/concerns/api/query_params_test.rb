@@ -35,6 +35,14 @@ class Api::QueryParamsTest < ActiveSupport::TestCase
     assert_equal 1, host(per_page: " 1 ").per_page_param
   end
 
+  test "page is capped at 1,000,000 so OFFSET cannot overflow (F1)" do
+    assert_equal 1_000_000, host(page: "1000000").page_param
+    [ "1000001", "1000000000000000000", "99999999999999999999" ].each do |value|
+      error = assert_bad_request(:page) { host(page: value).page_param }
+      assert_equal [ "must be at most 1000000" ], error.details["page"]
+    end
+  end
+
   test "page and per_page reject zero, negatives, non-numbers, and per_page over 100" do
     [ "0", "-1", "abc", "1.5", "2e3" ].each do |value|
       assert_bad_request(:page) { host(page: value).page_param }

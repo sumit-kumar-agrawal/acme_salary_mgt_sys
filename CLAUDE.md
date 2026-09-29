@@ -62,6 +62,9 @@ Run from `backend/` with RVM Ruby 3.2.0 (gemset `ruby-3.2.0@salary-mgn-3.2.0`):
 - Style: `bin/rubocop`
 - Security scan: `bin/brakeman --no-pager`
 - Server: `bin/rails server` (health check: `GET /api/v1/health`)
+- Database: `bin/rails db:migrate` then `bin/rails db:test:prepare` after pulling new migrations
+- Reference data: `bin/rails db:seed`; demo data (development only): `bin/rails demo:seed`, `demo:reset`; read-only integrity report: `bin/rails demo:verify`
+- HR login: `bin/rails hr:create_user` (reads `HR_USER_EMAIL`/`HR_USER_PASSWORD` from `backend/.env`)
 
 ## Workflow
 

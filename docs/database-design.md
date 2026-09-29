@@ -1,7 +1,7 @@
 # Salary Management System — Database Design
 
-**Status:** Approved design for migrations (BACKEND_PLAN.md task 1.3)  
-**Version:** 2.1 (2026-09-29: §4 indexes and §13 measurements from BACKEND_PLAN.md 6.2)  
+**Status:** Implemented through Phase 6 (2026-09-29). Changes are listed in §14  
+**Version:** 2.2 (2026-09-29)  
 **Engine:** MySQL 8.0.16+ (8.4 locally), InnoDB, `utf8mb4` / `utf8mb4_unicode_ci` (as generated in `backend/config/database.yml`)  
 **Databases:** `salary_management` (development; the name comes from `DB_NAME`) and `salary_management_test`. In development, the Rails 8 Solid Cache and Solid Queue tables share the primary database. They are managed by their own schema files and are not part of this domain design.
 
@@ -412,3 +412,14 @@ Rule: add an index only when a scenario exceeds 100 ms uncached, or an index rem
 | CSV (only scenario over 100 ms) | SQL is 71 of 293 ms; the time is Ruby formatting | No index helps; accepted (synchronous, capped, D24) |
 
 Descending sorts order by `field DESC, id ASC`, a mixed direction a single-column index can't serve, so they stay a filesort of about 7 ms. That is below the threshold, and changing the tie-break direction would alter the documented ordering (API §2.4), so neither was changed.
+
+## 14. Changelog
+
+- **2.2 (2026-09-29):** status set to implemented (BACKEND_PLAN.md 7.2).
+- **2.1 (2026-09-29):**
+  - §4: three indexes added after measurement (6.2);
+  - §6: `RecordNotUnique` → `422` (6.1);
+  - §7.3: exact band formula (5.1);
+  - §7.5: CSV from one capped query (5.3);
+  - §13: measured performance (6.2).
+- **2.0 (2026-09-28):** column-level design (Phase 1.3).

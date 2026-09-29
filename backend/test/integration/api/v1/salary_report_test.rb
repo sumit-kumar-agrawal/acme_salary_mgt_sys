@@ -99,7 +99,7 @@ class Api::V1::SalaryReportTest < ActionDispatch::IntegrationTest
 
   test "invalid parameters return 400 naming the parameter" do
     {
-      { sort: "email" } => "sort", { per_page: 101 } => "per_page", { q: "a" * 101 } => "q",
+      { sort: "email" } => "sort", { per_page: 101 } => "per_page", { page: "99999999999999999999" } => "page", { q: "a" * 101 } => "q",
       { as_of: "yesterday" } => "as_of", { country_id: 999_999 } => "country_id"
     }.each do |params, key|
       get api_v1_reports_salaries_path, params: params

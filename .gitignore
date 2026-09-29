@@ -6,3 +6,4 @@
 
 # Local environment files anywhere in the repo
 .env
+.idea/

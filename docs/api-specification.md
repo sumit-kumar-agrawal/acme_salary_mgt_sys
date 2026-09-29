@@ -1,7 +1,7 @@
 # Salary Management System — API Specification
 
-**Status:** Approved contract for implementation (BACKEND_PLAN.md task 1.4)  
-**Version:** 2.0 (2026-09-28)  
+**Status:** Implemented through Phase 6 (2026-09-29); the contract for the frontend. Changes since v2.0 are listed in §14  
+**Version:** 2.1 (2026-09-29)  
 **Base path:** `/api/v1`
 
 Decision IDs (Dn, In, O1) refer to `BACKEND_PLAN.md` Phase 1 findings and `docs/database-design.md`. Architecture context is in `docs/architecture.md`, and authentication is covered by ADR 004.
@@ -45,7 +45,7 @@ Decision IDs (Dn, In, O1) refer to `BACKEND_PLAN.md` Phase 1 findings and `docs/
 
 ### 2.3 Pagination
 
-Query parameters: `page` (integer ≥ 1, default 1) and `per_page` (integer 1–100, default 25, D23). Values outside these ranges return `400`.
+Query parameters: `page` (integer 1–1,000,000, default 1) and `per_page` (integer 1–100, default 25, D23). Values outside these ranges return `400`. The `page` cap keeps the database offset in range and is far beyond any real list.
 
 ```json
 {
@@ -500,13 +500,15 @@ The CSV takes the same parameters, except `page` and `per_page`, which are ignor
 |---|---|---|---|
 | GET | `/health` | public | 2.2 |
 | GET, POST, DELETE | `/session` | GET/POST public | 4.1 |
-| GET | `/countries`, `/departments`, `/currencies` | required | 4.3 |
+| GET | `/countries`, `/departments`, `/currencies` | required | 4.2 |
 | GET, POST | `/employees` | required | 4.3 |
 | GET, PATCH | `/employees/:id` | required | 4.3 |
 | GET, POST | `/employees/:employee_id/salary_records` | required | 4.4 |
 | GET, PATCH | `/employees/:employee_id/salary_records/:id` | required | 4.4 |
 | GET | `/analytics/summary`, `/analytics/distribution`, `/analytics/breakdown` | required | 5.2 |
 | GET | `/reports/salaries`, `/reports/salaries.csv` | required | 5.2, 5.3 |
+
+`PUT` is accepted as an alias of `PATCH` on `/employees/:id` and `/employees/:employee_id/salary_records/:id` (Rails resource routing) and behaves identically. Clients should use `PATCH`.
 
 No payroll, tax, disbursement, integration, or bulk-import endpoints exist.
 
@@ -524,3 +526,61 @@ No payroll, tax, disbursement, integration, or bulk-import endpoints exist.
 - **Analytics:** per-currency totals are correct on known data; no cross-currency total appears; median is correct for odd and even counts; `as_of` handling; terminated employees are excluded by default; band edges and counts; breakdown is keyed by dimension and currency; `by` is validated.
 - **Reports:** JSON and CSV return the same rows for the same filters; CSV columns follow the allowlist; formula cells are escaped; a result over 10,000 rows returns `422`; unauthenticated CSV requests return a JSON `401`.
 - **Privacy:** error bodies contain no submitted values; salary fields are filtered from logs.
+
+## 13. Client integration notes (frontend)
+
+A summary for client developers. The sections above are the contract.
+
+**Hosting and cookies**
+- Serve the frontend from the same site as the API, or proxy `/api` to the Rails server in development (e.g. to `http://localhost:3000`). The session cookie is `SameSite=Lax`, and no CORS is configured (ADR 004).
+- Send requests with credentials (`fetch(url, { credentials: "same-origin" })`). The cookie is `HttpOnly`, so scripts never read it.
+
+**Sign-in and CSRF**
+1. On load, call `GET /session`. It returns `authenticated`, `user`, and a `csrf_token`.
+2. Sign in with `POST /session` and `X-CSRF-Token: <token>`. The session is reset at sign-in, so **store the new `csrf_token` from the sign-in response** and use it from then on.
+3. Send `X-CSRF-Token` on every `POST`, `PATCH`, and `DELETE`. A missing or stale token returns `422 invalid_csrf_token`; call `GET /session` again for a fresh one.
+4. Sign out with `DELETE /session` (`204`).
+
+**Session lifetime**
+- Sessions expire after 30 minutes of inactivity or 8 hours after sign-in.
+- **Any** signed-in request refreshes the idle timer, including `GET /session`. A client that polls `/session` keeps the session alive until the 8-hour limit. Poll only if that is intended.
+- On any `401 unauthenticated`, treat the user as signed out and show the sign-in screen.
+
+**Errors**
+- Every error has `{"error": {"code", "message", "details?"}}`. Branch on `code`, not on `message`.
+- `details` appears for `validation_failed` and `bad_request`. It maps request field names (e.g. `employee_number`, `initial_salary.amount`, `country_id`) to messages, so errors can be shown next to form fields. Submitted values are never echoed.
+- Codes a client should handle:
+  - `401 unauthenticated`, `401 invalid_credentials`;
+  - `422 validation_failed`, `salary_record_not_editable`, `export_too_large`, `invalid_csrf_token`;
+  - `429 rate_limited`;
+  - `400 bad_request` (a client bug or a bad filter);
+  - `404 not_found`;
+  - `500 internal_error` (show a generic message).
+
+**Lists and filters**
+- Paginated lists return `meta` with `page`, `per_page`, `total_count`, and `total_pages`. `per_page` is 1–100 (default 25).
+- Invalid filter, sort, or pagination values return `400`; they are never silently corrected. Build filter options from `/countries`, `/departments`, and `/currencies`.
+- The employee list defaults to **all** statuses. Analytics and reports default to `active` + `on_leave`; pass `employment_status` to change that.
+
+**Money, currency, and dates**
+- Amounts are decimal **strings**, already rounded to the currency's minor units (JPY `"250000"`, KWD `"1500.125"`, USD `"85000.00"`). Display them as given, with `currency_code`, and label them **monthly**.
+- Never add amounts across currencies. Analytics return one row per currency, and there is no grand total.
+- Dates are `YYYY-MM-DD`, and "today" is UTC. Salary records carry `status` (`current`, `scheduled`, `historical`) and `editable`; use them rather than comparing dates on the client.
+
+**CSV export**
+- Link or navigate to `GET /reports/salaries.csv?<same filters as the JSON report>`. The response is an attachment (`salary-report-<as_of>.csv`, UTF-8 with a BOM).
+- If the result would exceed 10,000 rows, the response is **JSON** `422 export_too_large`. Check the status or content type before treating the response as a file.
+
+## 14. Changelog
+
+- **2.1 (2026-09-29), Phases 4–7 clarifications:**
+  - `details` keys use request field names (§6.3);
+  - an invalid `hired_on` returns `422`;
+  - a duplicate `employee_number`/`email` caught by the database after a concurrent request returns `422 validation_failed` (§10);
+  - analytics population: employees hired after `as_of` are out of scope; the filter echo shape; all ten bands with exact edges; `Cache-Control: no-store`; no minimum group size (§8);
+  - report sort rules (§9);
+  - CSV body, BOM, filename, error format, and allowed formats (§9.2);
+  - `PUT` alias and reference-data phase (§11);
+  - `page` capped at 1,000,000 (§2.3; 7.1 F1: a larger value previously returned `500`);
+  - client integration notes (§13).
+- **2.0 (2026-09-28):** approved contract (Phase 1).

@@ -6,13 +6,16 @@ module Api
 
     DEFAULT_PER_PAGE = 25
     MAX_PER_PAGE = 100
+    # Far beyond any real list (10,000 rows need at most 10,000 pages); keeps OFFSET within MySQL's
+    # 64-bit limit, so a huge page is a 400 rather than an SQL error (BACKEND_PLAN.md 7.1 F1).
+    MAX_PAGE = 1_000_000
     INTEGER_FORMAT = /\A\d+\z/
     DATE_FORMAT = /\A\d{4}-\d{2}-\d{2}\z/
 
     private
 
     def page_param
-      positive_integer_param(:page, default: 1, max: nil)
+      positive_integer_param(:page, default: 1, max: MAX_PAGE)
     end
 
     def per_page_param

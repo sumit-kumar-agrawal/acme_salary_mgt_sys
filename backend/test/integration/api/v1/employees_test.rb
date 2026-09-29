@@ -122,7 +122,8 @@ class Api::V1::EmployeesTest < ActionDispatch::IntegrationTest
 
   test "invalid list parameters return 400 with details" do
     {
-      { per_page: 101 } => "per_page", { page: 0 } => "page", { sort: "salary" } => "sort",
+      { per_page: 101 } => "per_page", { page: 0 } => "page", { page: "1000000000000000000" } => "page",
+      { sort: "salary" } => "sort",
       { country_id: 999_999_999 } => "country_id", { department_id: "x" } => "department_id",
       { employment_status: "retired" } => "employment_status", { q: "a" * 101 } => "q"
     }.each do |params, key|
