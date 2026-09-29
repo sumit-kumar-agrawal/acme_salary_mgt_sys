@@ -6,6 +6,11 @@ export function formatCount(value: number): string {
   return COUNT_FORMAT.format(value);
 }
 
+/** 1 → "1 employee", 9429 → "9,429 employees". */
+export function formatEmployeeCount(value: number): string {
+  return `${formatCount(value)} ${value === 1 ? "employee" : "employees"}`;
+}
+
 const MONEY_FORMAT = /^(-?)(\d+)(\.\d+)?$/;
 
 /**

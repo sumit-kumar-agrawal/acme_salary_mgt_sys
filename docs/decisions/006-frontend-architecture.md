@@ -22,7 +22,7 @@ A single-page application in `frontend/` (monorepo, ADR 001), built with Vite. I
 | Server state | TanStack Query 5 (installed in F2.2), through typed service objects in `src/services/` |
 | Session state | React Context (`AuthProvider`): user and CSRF token, in memory |
 | UI state | Local component state and the URL (filters, sort, page; not `q`) |
-| Charts | Chart.js 4.5 with react-chartjs-2 5.3 (installed in F7.1) |
+| Charts | None. The salary distribution is an accessible table per currency with Bootstrap bars (FRONTEND_PLAN.md V8, 2026-09-29, replacing Chart.js 4.5 with react-chartjs-2 5.3) |
 | Forms | Plain controlled components; the API's `422` `details` are shown per field |
 | Unit and component tests | Vitest 5.0, jsdom 30, React Testing Library 16.3, user-event 14.6, jest-dom 7.0, MSW 3.0 |
 | End-to-end tests | Playwright 1.63, Chromium only (installed in F3.1; the browser lives in the user cache, not the repo), against the real Rails API and development database. One sign-in per run via a setup project; the saved session file (`playwright/.auth/`) is git-ignored |
@@ -62,4 +62,5 @@ Conventions (enforced by `.claude/rules/frontend/*`):
 - **Redux Toolkit (with RTK Query) for all state:** a predictable single store with DevTools, but heavier than this app needs (see FD13). Revisit if substantial shared client-only state appears.
 - **Context API for server data as well:** no caching or request deduplication, and every consumer re-renders on change. Rejected in favour of TanStack Query.
 - **Plain hooks instead of TanStack Query; Recharts instead of Chart.js; react-hook-form:** viable. They were not chosen because of more repeated code (plain hooks), a larger bundle (Recharts), or too few forms to justify a library (react-hook-form).
+- **Chart.js with react-chartjs-2** (chosen at first, dropped in the F7 review, V8): the only chart is a 10-band distribution per currency. A canvas chart would still need a table as its text alternative, and it cannot render in jsdom, so component tests would have to mock it. A table with Bootstrap bars shows the same counts, is accessible as it stands, and adds no dependency.
 - **Cross-origin frontend with CORS:** it would require amending ADR 004 (`SameSite=None; Secure` cookies and rack-cors), so it was rejected.

@@ -2,6 +2,7 @@ import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  apiDownload,
   apiRequest,
   fieldErrors,
   buildUrl,
@@ -404,6 +405,99 @@ describe("apiRequest: transport failures", () => {
     const error = await captureError(apiRequest("/employees"));
 
     expect(error.code).toBe("unexpected_response");
+  });
+});
+
+describe("apiDownload (G6)", () => {
+  const CSV = "\uFEFFemployee_number,monthly_amount\nEMP-00101,85000.00\n";
+
+  it("returns the file and the API's file name, asking for CSV with the cookie session", async () => {
+    let request: Request | undefined;
+    server.use(
+      http.get("*/api/v1/reports/salaries.csv", ({ request: incoming }) => {
+        request = incoming;
+        return new HttpResponse(CSV, {
+          headers: {
+            "Content-Type": "text/csv; charset=utf-8",
+            "Content-Disposition":
+              "attachment; filename=\"salary-report-2026-09-28.csv\"; filename*=UTF-8''salary-report-2026-09-28.csv",
+          },
+        });
+      }),
+    );
+
+    const file = await apiDownload("/reports/salaries.csv", {
+      query: { country_id: "5", page: undefined },
+    });
+
+    expect(file.filename).toBe("salary-report-2026-09-28.csv");
+    expect(await file.blob.text()).toContain("EMP-00101,85000.00");
+    expect(request?.headers.get("Accept")).toBe("text/csv, application/json");
+    expect(request?.credentials).toBe("same-origin");
+    expect(new URL(request?.url ?? "").search).toBe("?country_id=5");
+  });
+
+  it("gives no file name when the header is missing or not a plain name", async () => {
+    for (const disposition of [null, 'attachment; filename="../x.csv"']) {
+      server.use(
+        http.get("*/api/v1/reports/salaries.csv", () =>
+          HttpResponse.text("a,b\n", {
+            headers: {
+              "Content-Type": "text/csv",
+              ...(disposition ? { "Content-Disposition": disposition } : {}),
+            },
+          }),
+        ),
+      );
+      expect((await apiDownload("/reports/salaries.csv")).filename).toBeNull();
+    }
+  });
+
+  it("throws the JSON error envelope (e.g. 422 export_too_large) as an ApiError", async () => {
+    server.use(
+      http.get("*/api/v1/reports/salaries.csv", () =>
+        HttpResponse.json(
+          envelope(
+            "export_too_large",
+            "Narrow the filters to export at most 10,000 rows.",
+          ),
+          { status: 422 },
+        ),
+      ),
+    );
+
+    const error = await captureError(apiDownload("/reports/salaries.csv"));
+
+    expect([error.status, error.code, error.message]).toEqual([
+      422,
+      "export_too_large",
+      "Narrow the filters to export at most 10,000 rows.",
+    ]);
+  });
+
+  it("calls the unauthorized handler on 401 and rejects JSON sent as a success", async () => {
+    const onUnauthorized = vi.fn();
+    setUnauthorizedHandler(onUnauthorized);
+    server.use(
+      http.get("*/api/v1/reports/salaries.csv", () =>
+        HttpResponse.json(envelope("unauthenticated", "Please sign in."), {
+          status: 401,
+        }),
+      ),
+    );
+    expect(
+      (await captureError(apiDownload("/reports/salaries.csv"))).code,
+    ).toBe("unauthenticated");
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+
+    server.use(
+      http.get("*/api/v1/reports/salaries.csv", () =>
+        HttpResponse.json({ data: [] }),
+      ),
+    );
+    expect(
+      (await captureError(apiDownload("/reports/salaries.csv"))).code,
+    ).toBe("unexpected_response");
   });
 });
 

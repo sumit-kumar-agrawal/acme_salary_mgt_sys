@@ -24,7 +24,13 @@ export default function MainLayout() {
           show={navigationOpen}
           onHide={() => setNavigationOpen(false)}
         />
-        <main id="main" tabIndex={-1} className="flex-grow-1 p-4">
+        {/* minWidth 0: a flex item otherwise grows to its widest table, so tables could not scroll on phones. */}
+        <main
+          id="main"
+          tabIndex={-1}
+          className="flex-grow-1 p-4"
+          style={{ minWidth: 0 }}
+        >
           <Outlet />
         </main>
       </div>

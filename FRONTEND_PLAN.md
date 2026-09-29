@@ -2,7 +2,7 @@
 
 **Purpose:** Phased implementation plan for the React frontend that consumes the completed Rails API (`BACKEND_PLAN.md`, Phases 1–7).
 
-**Stack (ADR 006):** Node 22 LTS, Vite 7, React 19, TypeScript (strict), React Router 7, TanStack Query 5, Bootstrap 5.3 with react-bootstrap, Chart.js; Vitest, React Testing Library, and MSW; Playwright.
+**Stack (ADR 006):** Node 22 LTS, Vite 7, React 19, TypeScript (strict), React Router 7, TanStack Query 5, Bootstrap 5.3 with react-bootstrap (no chart library, V8); Vitest, React Testing Library, and MSW; Playwright.
 
 **Scope:** The UI for FR-01 to FR-07 (`docs/requirements.md`): sign-in, employee management, salary records and history, search/filters/pagination, compensation analytics, and reports with CSV export, for one HR Manager. It excludes the features in requirements §6 and **any Rails backend change** unless it is approved and recorded here (see the gaps).
 
@@ -49,7 +49,7 @@ Observed:
 |---|---|
 | FD1 | **Node 22 via nvm.** The owner installed v22.23.3 through nvm on 2026-09-29 (after F2.1 found jsdom 30 needs ≥22.22.2); nvm's default is still v18.20.4. `frontend/.nvmrc` contains `22`, so `nvm use` in `frontend/` selects it; `engines` requires `>=22.22.2` (jsdom 30's minimum). Non-interactive shells run `source ~/.nvm/nvm.sh && nvm use` before npm commands |
 | FD2 | **Strict TypeScript** |
-| FD3 | **Stack:** Vite 7, React 19, React Router 7, TanStack Query 5, react-bootstrap with Bootstrap 5.3, Chart.js 4 with react-chartjs-2, Vitest, React Testing Library, user-event, MSW 2, Playwright, ESLint 9, and Prettier, all via npm (ADR 006) |
+| FD3 | **Stack:** Vite 7, React 19, React Router 7, TanStack Query 5, react-bootstrap with Bootstrap 5.3, ~~Chart.js 4 with react-chartjs-2~~ (dropped by V8, 2026-09-29), Vitest, React Testing Library, user-event, MSW 2, Playwright, ESLint 9, and Prettier, all via npm (ADR 006) |
 | FD4 | No form library and English only. State management: see FD13 |
 | FD5 | **Display rules:** money as the API's strings with `currency_code`, labelled monthly; no cross-currency totals; no floating-point money (only for chart sizing); dates as the API gives them; the API's `status`/`editable` flags (`.claude/rules/frontend/data-display.md`) |
 | FD6 | **(a)** Session and CSRF token in memory only. **(b)** List filters, sort, and page in the URL, **except `q`** |
@@ -883,23 +883,115 @@ Inputs: API spec v2.1 §7 (salary records), §10, §13; requirements FR-02, FR-0
 ## Phase F7 — Analytics and reports
 **Goal:** Currency-safe compensation insight and exportable reports (FR-04 to FR-06).
 
+### F7 review findings (2026-09-29)
+
+Inputs: API spec v2.1 §8 (analytics), §9 (report and CSV), §10, §13; requirements FR-04–FR-06, C4/C6, D11, D13, D18–D24; gaps G1 and G6; FD3/FD5 and Q2/Q3 (Chart.js); `.claude/rules/frontend/*`; the backend report controller and CSV exporter; and the frontend after F6 (`api.ts`, `useListParams`, `ReferenceSelects`, `DataTable`, `MoneyAmount`, the U4 invalidation). No code written. Observed:
+- **Analytics (§8):** three read-only aggregates share the filters `as_of`, `country_id`, `department_id`, and `employment_status`:
+  - `summary`: `employees_in_scope`, `employees_without_salary`, and per currency the count, total, average, median, min, and max;
+  - `distribution`: 10 bands per currency (all 10, including zero counts; 1 band if all amounts are equal);
+  - `breakdown?by=country|department`: rows keyed by dimension **and** currency (D11).
+
+  Every response echoes the applied `as_of`, `filters`, and `period: "monthly"`. There is no cross-currency total.
+- **Default population differs from the employee list:** when `employment_status` is omitted, the population is **active + on leave** (terminated excluded, D13). Only **one** status can be requested. The existing `EmploymentStatusSelect` already takes an `allLabel`, so the "All statuses" wording can be corrected without a new component.
+- **A past `as_of` uses today's country, department, and status** (§8.1); employees hired after `as_of` are out of scope.
+- **Report (§9):** the same filters plus `q`, `sort` (`employee_number` default, `last_name`, `amount`), and pagination. **Sorting by amount groups rows by currency first**, so amounts are never ordered across currencies. The CSV takes the same parameters (except `page`/`per_page`) and returns a file named `salary-report-<as_of>.csv`, or **JSON** `422 export_too_large` above 10,000 rows (G6).
+- **`apiRequest` cannot download a file:** it sends `Accept: application/json` and treats a non-JSON success as an unexpected response. The CSV needs a small download variant in `services/api.ts` that shares the error handling (the 401 handler, the envelope, network errors). The backend picks CSV from the `.csv` extension (`request.format.csv?`), so the path decides the format.
+- **The CSV cap cannot be reached with the demo data:** 10,005 employees, of whom 9,434 are active or on leave (9,051 + 383), is below 10,000, and only one status can be requested. `export_too_large` can therefore be tested only with MSW, not in E2E.
+- **Demo data shape:** 7 currencies, 8 countries, 8 departments. The dashboard shows at most 7 summary cards and 7 distributions, and a breakdown of at most 8 × 7 rows (fewer in practice). No pagination is needed.
+- **Chart.js is approved (FD3, Q3) but not installed.** react-chartjs-2 5.3.1 accepts React 19 and chart.js ^4.1.1; chart.js 4.5.1 is current. **jsdom has no canvas**, so component tests would have to mock the chart, and a canvas chart still needs a text alternative (a table) for screen readers.
+- **Routes:** the F1.1 page map says `/analytics`, while T1 (F5.1) said "dashboard later at `/dashboard`". The folder is `components/dashboard/` (F1.2). The report link from the employee list was deferred to F7.2 (T-review, G1).
+- **Cache refresh is already in place:** F6's `useSalaryRecords.ts` invalidates the `["analytics"]` and `["reports"]` prefixes after a salary write (U4), so F7 query keys must start with those prefixes.
+
+#### A. Missing decisions
+
+**Owner decisions (2026-09-29):** V1–V12 approved as recommended, with **V8 option (a)**: no chart library. FD3 and ADR 006 amended; Q2/Q3 kept as history (Chart.js is not installed).
+
+| ID | Decision | Recommendation | Needed by |
+|---|---|---|---|
+| V1 | **Routes and navigation.** | `/analytics` (the F1.1 page map) for the dashboard, in `components/dashboard/` (`AnalyticsPage.tsx`), and `/reports/salaries` for the report in `components/reports/` (`SalaryReportPage.tsx`). Sidebar: Employees, Analytics, Salary report (each added when its page exists, R9). `/` keeps redirecting to `/employees`: managing employees is the main task, and the dashboard runs three aggregate queries over ~10k employees | F7.1 |
+| V2 | **Services and types.** | `services/analyticsService.ts` (object: `summary(filters)`, `distribution(filters)`, `breakdown(filters, by)`) with `analytics.types.ts`; `services/reportService.ts` (`list(query)`, `downloadCsv(query)`) with `report.types.ts`. Money fields stay `string` | F7.1 / F7.2 |
+| V3 | **Filter state.** | Reuse `useListParams` (S4) for both pages: the four filters in the URL, sanitised; `q` in component state only (the report). The dashboard passes only `filters` to its requests (no `page`/`per_page`/`sort`). The breakdown's **by country / by department** toggle is component state (a view choice, not a filter), defaulting to country | F7.1 |
+| V4 | **Status filter wording.** | On both pages, `EmploymentStatusSelect` with `allLabel="Active and on leave (default)"`, because omitting the status excludes terminated employees here, unlike on the employee list. A hint under the as-of date: "Country, department, and status are today's values." | F7.1 |
+| V5 | **As-of date.** | A date input; empty means today (the server's UTC date, never computed on the client). The page shows the **applied** date from the API's echo: "Monthly figures as of 2026-09-29" (dashboard) and "Salaries in effect on …" (report) | F7.1 |
+| V6 | **Queries and loading.** | Keys `["analytics", "summary" \| "distribution" \| "breakdown", params]` and `["reports", "salaries", query]`, under the U4 prefixes. The three dashboard sections load independently, each with its own loading, error with Retry, and empty state, so one failure doesn't blank the page. Previous data stays visible while new filters load (`placeholderData`), as on the employee list | F7.1 |
+| V7 | **Summary cards.** | A line with counts (`formatCount`): "9,434 employees in scope; 94 without a salary on this date (not included below)". Then **one card per currency** in API order: employees, total, average, median, min, max, each a `MoneyAmount` in that currency, with the card titled "{code} — monthly". **No grand total and no cross-card comparison.** Empty `by_currency` → `EmptyState` "No salaries in effect for these filters on {as_of}." | F7.1 |
+| V8 | **Distribution: chart library or not.** | **Recommended (a): no chart library.** One small table per currency (heading "{code}: {n} employees"): rows "{lower}–{upper} {code}" and the count, each with a Bootstrap bar whose width is the band's share of the **largest band in that currency** (counts only; money is never converted). This is accessible as it stands, renders in jsdom, and adds no dependency. <br>**(b) Chart.js 4.5 + react-chartjs-2 5.3** as approved in FD3/Q3: a bar chart per currency, plus the same table as its text alternative, with the chart mocked in component tests and the bundle size measured. <br>Either way, each currency has its own scale and the last band's upper edge is inclusive (a caption note). Choosing (a) amends FD3/Q3 (Chart.js not used) | F7.1 |
+| V9 | **Breakdown table.** | "By country" / "By department" toggle (a react-bootstrap `ToggleButtonGroup` of radios). `DataTable` columns: Country (code and name) or Department, Currency, Employees, Total, Average, Median (monthly). **API order, not sortable:** sorting amounts across rows would compare currencies. A dimension with two currencies shows two rows | F7.1 |
+| V10 | **Report page.** | `DataTable` columns: Employee number (a link to the detail page), Name ("Last, First"), Country, Department, Status (`EmploymentStatusBadge`), Monthly amount (`MoneyAmount`), Effective from. Sortable: number, name, amount. With amount sorting, the caption says "Grouped by currency, then by amount". `SearchInput`, `Pagination`, and the total count. **G1 links:** the employee list gets a "Salary report" link; report rows link to each employee | F7.2 |
+| V11 | **CSV export (G6).** | `api.ts` gains `apiDownload(path, options)`, which returns `{ blob, filename }` and shares `send`'s error handling (401 handler, envelope, network, abort). It sends `Accept: text/csv, application/json` and takes the filename from `Content-Disposition` (fallback `salary-report.csv`). The page saves the file through an object URL and a temporary `<a download>`, then revokes the URL; nothing is stored. The export sends **the same filters, `q`, and `sort` as the table**, never `page`/`per_page` (FR-04). "Export CSV" is disabled while exporting ("Preparing CSV…"). `422 export_too_large` shows the API's message next to the button; other errors use `userMessage` | F7.2 |
+| V12 | **E2E (FD7), read-only on demo data.** | **Dashboard:** filter by one country, then compare each summary card with the API's JSON for the same filters, fetched with the same session (`page.request`). This automates "analytics match the API". **Report:** filter by country and sort by amount; the total count equals the API's `total_count`; download the CSV and check the file name `salary-report-<as_of>.csv`, the header row (the §9.2 allowlist, no email), and that the row count equals `total_count`. **The cap can't be reached with demo data** (9,434 rows at most), so `export_too_large` is covered by a component test only | F7.1 / F7.2 |
+
+#### B. Assumptions
+- **No backend change.** API §8–§9 cover FR-04–FR-06.
+- Groups of one are not suppressed (API §8: the single HR Manager can already see individual salaries in the report).
+- Counts (employees, band counts) are not money, so `formatCount` and bar widths may use numbers; amounts stay strings (FD5).
+- Only one employment status can be filtered at a time, as the API allows; "all three statuses" is not offered.
+
+#### C. Dependencies
+
+| Dependency | Blocks | Owner |
+|---|---|---|
+| ~~Approval of V1–V12, including the V8 choice~~ Approved 2026-09-29, V8 (a) | F7.1 | Project owner |
+| ~~F6 committed~~ Committed (`212aba5`) | F7.1 (clean starting point) | Project owner |
+| ~~If V8 (b): install chart.js and react-chartjs-2~~ Not needed: V8 (a), no new dependency | — | — |
+
+#### D. Risks
+
+| Risk | Likelihood / impact | Mitigation |
+|---|---|---|
+| Amounts compared or totalled across currencies (cards, bars, sorting) | Low / High | One card and one distribution per currency; bars scaled within a currency; breakdown not sortable; report amount sort grouped by currency (API); tests assert no grand total |
+| "All statuses" misread as including terminated employees | Medium / Medium | V4 label and hint |
+| A past `as_of` misread as historical country or department | Medium / Low | V4 hint; the applied date shown from the API (V5) |
+| Analytics stale after a salary change | Low / Medium | U4 already invalidates `["analytics"]` and `["reports"]`; V6 keys use those prefixes |
+| The CSV export path breaks unnoticed because the cap can't be hit in E2E | Medium / Low | MSW test for `export_too_large`; E2E covers the successful download |
+| The export doesn't match the table (different filters or sort) | Low / High | V11 builds both from the same query; E2E compares the CSV row count with `total_count` |
+
 ### F7.1 Analytics dashboard
-**Prompt:** `analyticsService + analytics.types.ts (src/services/) and the dashboard page (src/components/dashboard/): filters (as_of, country, department, status), per-currency summary cards, a distribution chart per currency (10 bands), and a breakdown table by country or department. No cross-currency totals.`
-**Tests and validation:**
-- component tests: one card per currency with no grand total, filter changes, empty result, chart given only the band counts;
-- E2E: filter analytics by country;
-- manual check against the API's figures for the same filters.
-**Status:** Not Started
+**Prompt:** `Per V1–V9 and V12: analyticsService + analytics.types.ts; AnalyticsPage at /analytics in components/dashboard with URL filters (as_of, country, department, status with the V4 label), the applied as_of from the API, summary cards per currency (no grand total), a distribution per currency (V8 a: a table with Bootstrap bars, no chart library), and the breakdown table by country or department; sidebar link. Tests, E2E, screenshot, record.`
+**Tasks:**
+1. ~~Owner: approve V1–V12, including V8.~~ Approved 2026-09-29, V8 (a).
+2. ~~`analyticsService.ts` + `analytics.types.ts`, with MSW tests.~~ Done 2026-09-29.
+3. ~~`components/dashboard/`: `AnalyticsPage`, `useAnalytics` (V6 keys), `SummaryCards`, `SalaryDistribution`, `BreakdownTable`; the route and sidebar link.~~ Done 2026-09-29. Also `formatEmployeeCount` in `components/common/format.ts` ("1 employee", "9,434 employees"). Details settled while building:
+   - **Filter layout:** "Clear filters" sits next to the page heading, so the four filters get enough width ("Active and on leave (default)" was cut off in a 5-column row). The as-of hint is "Empty means today."; the V4 note is a line under the filters: "Country, department, and status are each employee's current values, also for a past date."
+   - **Breakdown switch:** while the other dimension loads, the table shows Loading, never the previous dimension's rows under the new header (`keepPreviousData` would otherwise do that; found while writing the E2E, now covered by a test).
+   - **Distribution bands are keyed by position:** rounded band edges can repeat when a currency's range is tiny.
+4. ~~Tests.~~ Done 2026-09-29:
+   - `analyticsService.test.ts` (2): filters sent to each endpoint and `data` unwrapped; unset filters left out;
+   - `AnalyticsPage.test.tsx` (9): sidebar link, title, and the applied `as_of` from the API; one card per currency in API order with all metrics as given (INR/JPY/KWD minor units), exactly one Total per card, and no grand total; the counts line; the empty state; URL and form filters sent to all three endpoints without `page`/`sort`, and Clear filters; the V4 label and the as-of date; every band with bars scaled within one currency (JPY's single band at 100%); breakdown rows per dimension and currency, no sort buttons, and the department toggle; no stale rows while switching; a failed section with Retry while the others still show.
+5. ~~E2E (V12), screenshot, validation, record.~~ Done 2026-09-29; see the status.
+
+**Acceptance:** The dashboard matches the API for the same filters (E2E); no cross-currency total or comparison; all tests pass.
+**Status:** Done (2026-09-29).
+- **Checks under Node 22.23.3:** `prettier --check`, `npm run typecheck`, `lint` (zero warnings), `test` (**29 files, 178 tests**, also green with two shuffled orders), and `build` all exit 0. JS bundle 391.3 kB (121.9 kB gzip), up 9.5 kB from F6.2 with no new dependency.
+- **E2E against the real API** (Claude's Rails on :3127, Vite on :5193, temporary user): **13 passed**. New `analytics.spec.ts` (read-only): open Analytics from the sidebar, filter by Germany, then compare the page with the API's own JSON for the same filters (same session): the applied date, one card per currency with the count and all five amounts, one distribution table per currency, and the breakdown row count by department. The first run failed on the known ambiguous label ("Country" also matched "By country"); fixed with `exact: true`.
+- **Cleanup verified:** temporary user deleted (deleted=1, `User.count` = 1), auth file removed, ports free. Each run adds two `EMP-E2E-*` employees (one from `employee-forms.spec.ts`, one from the U9 journey in `salaries.spec.ts`); the three runs this session added six (10,011 employees now).
+- **Mutation check:** scaling bars on one fixed scale (as if across currencies) is caught by the "bars scaled within that currency" test; restored and re-run green. The breakdown fix was also checked the same way: its test fails on the old code.
+- **Screenshots reviewed** (Germany: EUR and USD): desktop shows two currency cards with no total, two distributions on their own scales, and the breakdown with Germany/EUR and Germany/USD rows. **Phone (390 px) found a layout bug that affected every page with a table:** `<main>` is a flex item with the default `min-width: auto`, so it grew to the widest table and the whole page scrolled sideways (324 px here, 216 px on the employee list). Fixed in `layouts/MainLayout.tsx` (`minWidth: 0`), so tables scroll inside their own wrappers; overflow is now 0 on analytics, the employee list, and an employee's detail page. The distribution tables are now `responsive` as well.
 
 ### F7.2 Salary report and CSV export
-**Prompt:** `reportService + report.types.ts (src/services/) and the salary report page (src/components/reports/): shared filters plus q, sort, and pagination; CSV export via fetch that saves the file or shows 422 export_too_large (G6).`
-**Tests and validation:**
-- component tests: sort by amount grouped by currency, pagination, export success, and the export-too-large message;
-- E2E: filter the report and download the CSV;
-- manual check.
-**Status:** Not Started
+**Prompt:** `Per V2, V3, V10–V12: reportService + report.types.ts; apiDownload in services/api.ts; SalaryReportPage at /reports/salaries in components/reports with the shared filters, q, sort (amount grouped by currency), pagination, and Export CSV with the same query (422 export_too_large shown); Salary report links (sidebar, employee list); rows link to the employee. Tests, E2E, screenshot, record.`
+**Tasks:**
+1. ~~`apiDownload` in `api.ts` (tests: the blob and the file name, a JSON `422` as `ApiError`, the 401 handler); `reportService.ts` + `report.types.ts`, with MSW tests.~~ Done 2026-09-30. `send` was split so that `apiRequest` and `apiDownload` share one fetch, network/abort handling, and error-envelope path (`fetchApi`, `readJson`, `errorFrom`); the 20 existing `api.ts` tests passed unchanged. `apiDownload` sends `Accept: text/csv, application/json`, rejects a JSON body sent as a success, and takes the file name from `filename="…"` only when it is a plain name (letters, digits, `.`, `_`, `-`), otherwise the page uses `salary-report.csv`.
+2. ~~`components/reports/`: `SalaryReportPage`, `useSalaryReport`, `ExportCsvButton`; the route, the sidebar link, and the employee-list link.~~ Done 2026-09-30. Details settled while building:
+   - **Count line:** "1,155 employees." and, when sorted by amount, "Sorted by amount within each currency (currencies A–Z)." (the V10 caption, shown as visible text next to the count).
+   - **Export:** `ExportCsvButton` in the page header uses a TanStack mutation (no retry). `422 export_too_large` shows the API's message as a warning; other errors show `userMessage` as a danger alert. The object URL is revoked right after the click is handled.
+   - **Filter layout:** two rows (search, as of, country; department, status, Clear filters), so "Active and on leave (default)" is never cut off. It was in a one-row first version (screenshot review), as in F7.1.
+   - **Employee list:** a "Salary report" button next to New employee (G1).
+3. ~~Tests.~~ Done 2026-09-30:
+   - `api.test.ts` (+4, 24 in total): the file, file name, `Accept`, and query; no file name when missing or not a plain name; `422 export_too_large` as `ApiError`; the 401 handler, and JSON sent as a success rejected;
+   - `reportService.test.ts` (2): the report query; the CSV sends the filters, `q`, and sort but never `page`/`per_page`;
+   - `SalaryReportPage.test.tsx` (9): sidebar and employee-list links, title, and the applied `as_of`; the V10 columns, each amount in its own currency, the employee link, no email or totals; server sort by amount with the grouping note; the report's default status label, paging, filters, and search (`q` never in the URL); the empty state with Clear filters; export with the table's query (not the page) saved under the API's file name, with the URL revoked; `export_too_large` shown and nothing saved; Export disabled while preparing; the load error with Retry.
+4. ~~E2E (V12), screenshot, validation, record.~~ Done 2026-09-30; see the status.
 
-**Phase gate:** Analytics and reports match the API for the same filters; export works and handles the cap; all module tests pass.
+**Acceptance:** The report and its CSV show the same rows for the same filters; export handles the cap; all tests pass.
+**Status:** Done (2026-09-30).
+- **Checks under Node 22.23.3:** `prettier --check`, `npm run typecheck`, `lint` (zero warnings), `test` (**31 files, 193 tests**, also green with two shuffled orders), and `build` all exit 0. JS bundle 396.4 kB (123.0 kB gzip).
+- **E2E against the real API** (Claude's Rails on :3128, Vite on :5194, temporary user): **14 passed** on the first run and again on the final code. New `reports.spec.ts` (read-only): open the report from the employee list, filter by Germany, and sort by amount. The first page's employee numbers equal the API's for the same query, and the count line shows the API's `total_count`. The downloaded file is named `salary-report-<as_of>.csv` and has the §9.2 header (no email), `total_count` + 1 lines, and its first rows in the table's order.
+- **Cleanup verified:** temporary user deleted (deleted=1, `User.count` = 1), auth file removed, ports free. The two runs added four `EMP-E2E-*` employees (10,015 now).
+- **Mutation check:** exporting with the table's `page`/`per_page` (one page instead of every row) is caught by the service test and the page's export test; restored and re-run green.
+- **Screenshots reviewed:** desktop (Germany, by amount): rows ascending within EUR, the count and grouping note, the links, and the filters in full after the two-row fix; the `export_too_large` warning, shown by answering the CSV request with the API's documented `422` in the browser, since demo data can't exceed 9,434 rows; phone: 0 px horizontal overflow on the report and the employee list, with the new Salary report button wrapping cleanly.
+
+**Phase gate:** Analytics and reports match the API for the same filters; export works and handles the cap; all module tests pass. **Passed 2026-09-30:** the analytics E2E compares every card with the API for the same filters; the report E2E compares the first page and the total with the API, and the CSV holds the same rows in the same order; the cap is handled (MSW test and a browser-level check of the documented `422`); all unit, component, and E2E tests pass.
 
 ---
 
@@ -978,6 +1070,10 @@ Inputs: API spec v2.1 §7 (salary records), §10, §13; requirements FR-02, FR-0
 | 2026-09-29 | F6 (U decisions) | Owner approved U1–U9 as recommended | Plan update only | — |
 | 2026-09-29 | F6.1 | `salaryService` (`list`) + `salary.types.ts`; `components/salaries/` (`useSalaryRecords` with the U4 key, `SalaryStatusBadge`, `SalaryHistory`); the Salary history section on `EmployeeDetailPage`; default MSW handler and `salaryRecords` fixture. E2E `salaries.spec.ts` | format, typecheck, lint, test (26 files, 153 tests), and build exit 0; E2E 11/11 on the real API (temporary user; cleanup verified); per-row currency mutation caught; history screenshot reviewed | Next: F6.2 on the owner's go-ahead |
 | 2026-09-29 | F6.2 | `SalaryChangeDialog`, `SalaryCorrectionDialog`, `SalarySaveError`; Record salary change and Correct (editable rows only) in `SalaryHistory`; `useSalaryChange`/`useSalaryCorrection` (U4 refresh); `salaryService.change`/`correct`. Default currency falls back to the latest record's when there is no current salary; Record salary change is disabled while the history is loading or failed. U9 journey in `salaries.spec.ts`. F6 gate passed | typecheck, lint, test (27 files, 167 tests), and build exit 0; prettier clean; E2E 12/12 on the real API (temporary user; cleanup verified, `User.count` = 1); changed-fields-only mutation caught; both dialog screenshots reviewed | Owner: commit F6 |
+| 2026-09-29 | F7 (review) | Reviewed F7 against API §8–§10 and §13, FR-04–FR-06, D11/D13/D18–D24, G1/G6, FD3/FD5/Q3, the backend report controller and CSV exporter, and the frontend after F6. Recorded V1–V12, assumptions, dependencies, and risks; rewrote F7.1 and F7.2 with tasks. Key points: `/analytics` and `/reports/salaries`; the analytics and report default population is active + on leave, so the status filter needs its own label; the applied `as_of` comes from the API; one card and one distribution per currency, each on its own scale; the breakdown is not sortable; `apiRequest` can't download files, so `api.ts` gains `apiDownload`; the CSV uses the table's exact query; the 10,000-row cap can't be reached with demo data (9,434 at most), so it is tested with MSW only; V8 asks whether to keep Chart.js (recommended: plain table with bars, no dependency) | Read-only: API spec, requirements, backend controllers and exporter, demo-data counts (`bin/rails runner`), `npm view` for chart.js/react-chartjs-2, and the current frontend code. No code written | Owner: approve V1–V12 (and choose V8) |
+| 2026-09-29 | F7 (V decisions) | Owner approved V1–V12 as recommended, with V8 option (a): the distribution is a table per currency with Bootstrap bars, and no chart library is used. FD3, the stack line, and ADR 006 (Charts row, alternatives) amended | Plan and ADR update only | — |
+| 2026-09-29 | F7.1 | `analyticsService` + `analytics.types.ts`; `components/dashboard/` (`AnalyticsPage` at `/analytics`, `useAnalytics` with the V6 keys, `SummaryCards`, `SalaryDistribution` as tables with bars and no chart library, `BreakdownTable`); sidebar link; `formatEmployeeCount`; `analytics` MSW fixture. E2E `analytics.spec.ts` compares the page with the API for the same filters. Fixed: breakdown rows under the wrong header while switching; page-wide horizontal scroll on phones (`MainLayout` `min-width: 0`, all table pages) | prettier, typecheck, lint, test (29 files, 178 tests; two shuffled orders), and build exit 0; E2E 13/13 on the real API (temporary user; cleanup verified, `User.count` = 1); bar-scale mutation caught; desktop and phone screenshots reviewed | Next: F7.2 on the owner's go-ahead |
+| 2026-09-30 | F7.2 | `apiDownload` in `api.ts` (shared fetch and error handling with `apiRequest`); `reportService` + `report.types.ts`; `components/reports/` (`SalaryReportPage` at `/reports/salaries`, `useSalaryReport`, `ExportCsvButton`); sidebar link and the employee list's Salary report button (G1); `salaryReport` MSW fixture. E2E `reports.spec.ts` compares the report with the API and checks the downloaded CSV. F7 gate passed | prettier, typecheck, lint, test (31 files, 193 tests; two shuffled orders), and build exit 0; E2E 14/14 on the real API (temporary user; cleanup verified, `User.count` = 1); export-page mutation caught; desktop, export-too-large, and phone screenshots reviewed | Owner: commit F7 (F7.1 + F7.2). Correction to the F7.1 status: each E2E run adds two `EMP-E2E-*` employees, not one |
 
 ## Current progress
 - **F1** — Frontend design and decisions — **Done (gate passed 2026-09-29)**
@@ -986,4 +1082,5 @@ Inputs: API spec v2.1 §7 (salary records), §10, §13; requirements FR-02, FR-0
 - **F4** — Shared components — **Done (gate passed 2026-09-29)**. F4.1, F4.2 Done.
 - **F5** — Employees — **Done (gate passed 2026-09-29)**. F5.1, F5.2, F5.3 Done.
 - **F6** — Salary history — **Done (gate passed 2026-09-29)**. F6.1, F6.2 Done.
-- **Next:** F7 review (analytics and reports), after the owner commits F6
+- **F7** — Analytics and reports — **Done (gate passed 2026-09-30)**. F7.1, F7.2 Done.
+- **Next:** F8 (quality review), after the owner commits F7

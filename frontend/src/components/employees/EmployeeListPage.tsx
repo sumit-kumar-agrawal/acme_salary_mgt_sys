@@ -88,13 +88,19 @@ export default function EmployeeListPage() {
     <>
       <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
         <h1 className="h3 mb-0">Employees</h1>
-        <Link
-          to="/employees/new"
-          state={{ from: backTo }}
-          className="btn btn-primary"
-        >
-          New employee
-        </Link>
+        <div className="d-flex gap-2">
+          {/* Salaries are not listed here (D18); the report shows them (G1). */}
+          <Link to="/reports/salaries" className="btn btn-outline-secondary">
+            Salary report
+          </Link>
+          <Link
+            to="/employees/new"
+            state={{ from: backTo }}
+            className="btn btn-primary"
+          >
+            New employee
+          </Link>
+        </div>
       </div>
 
       <Row className="g-3 align-items-end mb-3">

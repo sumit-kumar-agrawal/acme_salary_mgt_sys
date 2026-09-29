@@ -6,6 +6,8 @@ import { NavLink } from "react-router";
 // Only pages that exist are listed (R9); each feature adds its link when it is built.
 const NAV_ITEMS = [
   { to: "/employees", label: "Employees", end: false },
+  { to: "/analytics", label: "Analytics", end: false },
+  { to: "/reports/salaries", label: "Salary report", end: false },
 ] as const;
 
 interface SidebarProps {

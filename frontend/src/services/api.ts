@@ -152,21 +152,55 @@ export async function apiRequest<T>(
   }
 }
 
-async function send<T>(
+async function send<T>(path: string, options: ApiRequestOptions): Promise<T> {
+  const response = await fetchApi(path, options, "application/json");
+  if (response.status === 204) return undefined as T;
+
+  const body = await readJson(response);
+  if (!response.ok) throw errorFrom(response, body);
+  if (body === null) throw unexpectedResponse(response.status);
+  return body as T;
+}
+
+/** A downloaded file and the name the API gave it (Content-Disposition), if any. */
+export interface ApiDownload {
+  blob: Blob;
+  filename: string | null;
+}
+
+/**
+ * GETs a file (e.g. the CSV report, G6). Errors arrive as the usual JSON envelope, not as a file, so they
+ * are thrown as ApiError exactly as apiRequest does; a JSON body with a 2xx status is not a file either.
+ */
+export async function apiDownload(
+  path: string,
+  options: ApiRequestOptions = {},
+): Promise<ApiDownload> {
+  const response = await fetchApi(path, options, "text/csv, application/json");
+  if (!response.ok) throw errorFrom(response, await readJson(response));
+  if ((response.headers.get("content-type") ?? "").includes("application/json"))
+    throw unexpectedResponse(response.status);
+  return {
+    blob: await response.blob(),
+    filename: attachmentFilename(response.headers.get("content-disposition")),
+  };
+}
+
+async function fetchApi(
   path: string,
   { query, headers, ...init }: ApiRequestOptions,
-): Promise<T> {
+  accept: string,
+): Promise<Response> {
   const method = (init.method ?? "GET").toUpperCase();
   const requestHeaders = new Headers(headers);
-  requestHeaders.set("Accept", "application/json");
+  requestHeaders.set("Accept", accept);
   if (init.body !== undefined)
     requestHeaders.set("Content-Type", "application/json");
   if (WRITE_METHODS.has(method) && csrfToken)
     requestHeaders.set("X-CSRF-Token", csrfToken);
 
-  let response: Response;
   try {
-    response = await fetch(buildUrl(path, query), {
+    return await fetch(buildUrl(path, query), {
       ...init,
       method,
       headers: requestHeaders,
@@ -185,30 +219,34 @@ async function send<T>(
       "network_error",
     );
   }
+}
 
-  if (response.status === 204) return undefined as T;
-
+async function readJson(response: Response): Promise<unknown> {
   const contentType = response.headers.get("content-type") ?? "";
-  const body: unknown = contentType.includes("application/json")
+  return contentType.includes("application/json")
     ? await response.json().catch(() => null)
     : null;
+}
 
-  if (response.ok) {
-    if (body === null) throw unexpectedResponse(response.status);
-    return body as T;
-  }
-
+/** The ApiError for a failed response; a 401 unauthenticated also signs the user out. */
+function errorFrom(response: Response, body: unknown): ApiError {
   const apiError = readErrorEnvelope(body);
-  if (!apiError) throw unexpectedResponse(response.status);
+  if (!apiError) return unexpectedResponse(response.status);
 
   if (response.status === 401 && apiError.code === "unauthenticated")
     onUnauthorized?.();
-  throw new ApiError(
+  return new ApiError(
     apiError.message,
     response.status,
     apiError.code,
     apiError.details,
   );
+}
+
+/** The plain file name from `attachment; filename="…"`; null when missing or not a simple name. */
+function attachmentFilename(disposition: string | null): string | null {
+  const name = /filename="([^"]+)"/.exec(disposition ?? "")?.[1];
+  return name && /^[\w.-]+$/.test(name) ? name : null;
 }
 
 function unexpectedResponse(status: number): ApiError {
