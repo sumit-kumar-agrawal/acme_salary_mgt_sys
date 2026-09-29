@@ -11,6 +11,7 @@ import type { AuthNotice } from "@/components/auth/authContext";
 import { useAuth } from "@/hooks/useAuth";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { safeReturnPath } from "@/routes/returnPath";
+import FormField from "@/components/common/FormField";
 
 // Sign-in page (FRONTEND_PLAN.md R8). Only basic checks here; the API decides whether credentials are valid.
 
@@ -98,44 +99,26 @@ export default function SignInPage() {
             </Alert>
           )}
           <Form noValidate onSubmit={handleSubmit}>
-            <Form.Group className="mb-3" controlId="sign-in-email">
-              <Form.Label>Email</Form.Label>
-              <Form.Control
-                type="email"
-                autoComplete="username"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                isInvalid={Boolean(fieldErrors.email)}
-                // isInvalid only adds a CSS class; aria-invalid tells assistive technology.
-                aria-invalid={fieldErrors.email ? true : undefined}
-                aria-describedby={
-                  fieldErrors.email ? "sign-in-email-error" : undefined
-                }
-                required
-              />
-              <Form.Control.Feedback type="invalid" id="sign-in-email-error">
-                {fieldErrors.email}
-              </Form.Control.Feedback>
-            </Form.Group>
-            <Form.Group className="mb-4" controlId="sign-in-password">
-              <Form.Label>Password</Form.Label>
-              <Form.Control
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                isInvalid={Boolean(fieldErrors.password)}
-                // isInvalid only adds a CSS class; aria-invalid tells assistive technology.
-                aria-invalid={fieldErrors.password ? true : undefined}
-                aria-describedby={
-                  fieldErrors.password ? "sign-in-password-error" : undefined
-                }
-                required
-              />
-              <Form.Control.Feedback type="invalid" id="sign-in-password-error">
-                {fieldErrors.password}
-              </Form.Control.Feedback>
-            </Form.Group>
+            <FormField
+              groupClassName="mb-3"
+              label="Email"
+              type="email"
+              autoComplete="username"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              error={fieldErrors.email}
+              required
+            />
+            <FormField
+              groupClassName="mb-4"
+              label="Password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              error={fieldErrors.password}
+              required
+            />
             <Button type="submit" className="w-100" disabled={signIn.isPending}>
               {signIn.isPending ? "Signing in…" : "Sign in"}
             </Button>

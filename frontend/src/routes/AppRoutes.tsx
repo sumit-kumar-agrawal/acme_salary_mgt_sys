@@ -1,7 +1,10 @@
-import { Route, Routes } from "react-router";
+import { Navigate, Route, Routes } from "react-router";
 import SignInPage from "@/components/auth/SignInPage";
 import NotFoundPage from "@/components/common/NotFoundPage";
-import HomePage from "@/components/dashboard/HomePage";
+import EmployeeCreatePage from "@/components/employees/EmployeeCreatePage";
+import EmployeeDetailPage from "@/components/employees/EmployeeDetailPage";
+import EmployeeEditPage from "@/components/employees/EmployeeEditPage";
+import EmployeeListPage from "@/components/employees/EmployeeListPage";
 import MainLayout from "@/layouts/MainLayout";
 import RequireAuth from "@/routes/RequireAuth";
 import { SIGN_IN_PATH } from "@/routes/returnPath";
@@ -18,7 +21,11 @@ export default function AppRoutes() {
           </RequireAuth>
         }
       >
-        <Route index element={<HomePage />} />
+        <Route index element={<Navigate to="/employees" replace />} />
+        <Route path="employees" element={<EmployeeListPage />} />
+        <Route path="employees/new" element={<EmployeeCreatePage />} />
+        <Route path="employees/:id" element={<EmployeeDetailPage />} />
+        <Route path="employees/:id/edit" element={<EmployeeEditPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

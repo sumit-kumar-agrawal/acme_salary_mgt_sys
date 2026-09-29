@@ -4,7 +4,10 @@ import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/services/api";
 import ErrorAlert from "@/components/common/ErrorAlert";
+import EmploymentStatusBadge from "@/components/common/EmploymentStatusBadge";
+import EmptyState from "@/components/common/EmptyState";
 import ErrorBoundary from "@/components/common/ErrorBoundary";
+import { formatCount } from "@/components/common/format";
 import LoadingState from "@/components/common/LoadingState";
 import NotFoundPage from "@/components/common/NotFoundPage";
 import { reportRenderError } from "@/components/common/reportRenderError";
@@ -57,7 +60,7 @@ describe("ErrorAlert", () => {
 });
 
 describe("NotFoundPage", () => {
-  it("shows a generic message with a link Home and sets the title", () => {
+  it("shows a generic message with a link to the employee list and sets the title", () => {
     render(
       <MemoryRouter>
         <NotFoundPage />
@@ -67,10 +70,9 @@ describe("NotFoundPage", () => {
     expect(
       screen.getByRole("heading", { name: "Page not found" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Go to Home" })).toHaveAttribute(
-      "href",
-      "/",
-    );
+    expect(
+      screen.getByRole("link", { name: "Go to employees" }),
+    ).toHaveAttribute("href", "/employees");
     expect(document.title).toBe("Page not found · Salary Management");
   });
 });
@@ -107,5 +109,50 @@ describe("ErrorBoundary", () => {
       "Unexpected TypeError while rendering",
     );
     expect(consoleError.mock.calls.flat().join(" ")).not.toContain("123456.78");
+  });
+});
+
+describe("EmptyState", () => {
+  it("announces the message and shows an optional action", () => {
+    render(
+      <EmptyState
+        message="No employees match these filters."
+        action={<button type="button">Clear filters</button>}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "No employees match these filters.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Clear filters" }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("formatCount", () => {
+  it("groups thousands for record counts", () => {
+    expect([
+      formatCount(0),
+      formatCount(999),
+      formatCount(9429),
+      formatCount(1_000_000),
+    ]).toEqual(["0", "999", "9,429", "1,000,000"]);
+  });
+});
+
+describe("EmploymentStatusBadge", () => {
+  it("always shows a readable label, not colour alone", () => {
+    render(
+      <>
+        <EmploymentStatusBadge status="active" />
+        <EmploymentStatusBadge status="on_leave" />
+        <EmploymentStatusBadge status="terminated" />
+      </>,
+    );
+
+    expect(screen.getByText("Active")).toHaveClass("bg-success");
+    expect(screen.getByText("On leave")).toHaveClass("bg-warning", "text-dark");
+    expect(screen.getByText("Terminated")).toHaveClass("bg-secondary");
   });
 });

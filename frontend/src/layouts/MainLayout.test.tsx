@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import App from "@/App";
@@ -14,7 +14,7 @@ afterEach(() => setCsrfToken(null));
 async function renderSignedIn() {
   mockSessionBackend({ signedIn: true });
   renderWithProviders(<App />);
-  await screen.findByRole("heading", { name: "Home" });
+  await screen.findByRole("heading", { name: "Employees" });
   return userEvent.setup();
 }
 
@@ -28,7 +28,7 @@ describe("MainLayout", () => {
     expect(screen.getByRole("main")).toHaveAttribute("id", "main");
     expect(screen.getAllByRole("main")).toHaveLength(1);
     await waitFor(() =>
-      expect(document.title).toBe("Home · Salary Management"),
+      expect(document.title).toBe("Employees · Salary Management"),
     );
   });
 
@@ -44,11 +44,8 @@ describe("MainLayout", () => {
     await renderSignedIn();
 
     const nav = screen.getByRole("navigation", { name: "Main" });
-    expect(nav).toContainElement(screen.getByRole("link", { name: "Home" }));
-    expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    const link = within(nav).getByRole("link", { name: "Employees" });
+    expect(link).toHaveAttribute("aria-current", "page");
   });
 
   it("opens and closes the sidebar with the small-screen menu button", async () => {

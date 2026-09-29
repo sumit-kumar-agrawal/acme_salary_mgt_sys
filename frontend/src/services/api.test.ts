@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   apiRequest,
+  fieldErrors,
   buildUrl,
   setCsrfRefresher,
   setCsrfToken,
@@ -462,5 +463,42 @@ describe("apiRequest: privacy", () => {
       expect(text).not.toContain(salary);
       expect(text).not.toContain("hr@example.test");
     }
+  });
+});
+
+describe("fieldErrors (S10)", () => {
+  it("maps 422 validation details to one message per request field, including nested keys", () => {
+    const error = new ApiError(
+      "Please correct the highlighted fields.",
+      422,
+      "validation_failed",
+      {
+        employee_number: ["has already been taken"],
+        "initial_salary.amount": [
+          "must be greater than 0",
+          "must have at most 2 decimal places for this currency",
+        ],
+      },
+    );
+
+    expect(fieldErrors(error)).toEqual({
+      employee_number: "has already been taken",
+      "initial_salary.amount":
+        "must be greater than 0; must have at most 2 decimal places for this currency",
+    });
+  });
+
+  it("returns no field errors for other errors (they are shown by ErrorAlert)", () => {
+    expect(
+      fieldErrors(
+        new ApiError("The request is malformed.", 400, "bad_request", {
+          sort: ["x"],
+        }),
+      ),
+    ).toEqual({});
+    expect(fieldErrors(new ApiError("Not found.", 404, "not_found"))).toEqual(
+      {},
+    );
+    expect(fieldErrors(new TypeError("boom"))).toEqual({});
   });
 });

@@ -95,6 +95,7 @@ None block FR-01 to FR-07.
 | G4 | `employment_status` accepts one value | Single-select filter |
 | G5 | No salary-trend endpoint | Out of scope; `as_of` gives point-in-time views |
 | G6 | The CSV cap is reported as JSON `422 export_too_large` | Download with `fetch`, check the status, then save the file (no plain link) |
+| G8 | On create, if both the employee and the initial salary are invalid, the API reports only the employee's errors (its service saves the employee first and rolls back); salary errors appear on the next attempt (found in F5.3) | Accepted: nothing is created wrongly; the form shows each round's errors. Reporting both together would be an optional backend change |
 | G7 | Production SPA serving and the client-route fallback are not defined | Deferred (FD9); ADR 006 consequences. **Decide at deployment, once the real URLs and IPs are known:** <br>- **(a) same origin** (Rails `public/` or a reverse proxy on one domain): no CORS, no backend auth change; <br>- **(b) cross-origin:** a separately approved backend change: `rack-cors` with an env allowlist, an allow-listed CSRF origin check, cookie `SameSite`/`Secure` per same-site or cross-site hosting, HTTPS (the production cookie is `Secure`), tests, and ADR 004/005 amendments. <br>The frontend works with either through `VITE_API_BASE_URL` (see F2 Q1) |
 
 #### C. Assumptions
@@ -509,19 +510,146 @@ Notes:
 ## Phase F4 — Shared components
 **Goal:** Reusable, accessible building blocks, each tested as it is built.
 
-### F4.1 States, tables, and filters
-**Prompt:** `LoadingState, EmptyState, ErrorAlert, Pagination (API meta), SortableHeader, SearchInput, and reference-data selects (countries, departments, statuses, currencies) in src/components/common/; referenceService + reference.types.ts in src/services/; URL-synced filter helpers as a shared hook in src/hooks/ (FD6b, q excluded).`
-**Tests and validation:**
-- component tests for each component: states, keyboard use and labels, pagination edges, `q` not written to the URL;
-- lint, typecheck, and test.
-**Status:** Not Started
+### F4 review findings (2026-09-29)
 
-### F4.2 Display components and form helpers
-**Prompt:** `MoneyAmount, DateText, EmploymentStatusBadge, SalaryStatusBadge, ConfirmDialog, and FormField with mapping of 422 details to fields.`
-**Tests and validation:**
-- component tests with JPY, KWD, and 2-decimal amounts (strings shown as given, currency always present, labelled monthly), and field-error mapping;
-- lint, typecheck, and test.
-**Status:** Not Started
+Inputs: API spec v2.1 (§2.3 pagination, §2.4 sorting, §5 reference data, §6.1 employee list, §8.1 analytics filters, §9 report, §13 client notes); `.claude/rules/frontend/*` (especially "no abstraction used once" and "create files only when a real feature needs them"); the F5–F7 subphases; and the code after F3. No code written. Observed:
+- **Reference data (§5):** `GET /countries` → `{id, code, name}` by name; `/departments` → `{id, name}`; `/currencies` → `{code, name, minor_units}` by code. Unpaginated, read-only, and seeded. **Employment statuses have no endpoint:** they are a fixed enum in the contract (`active`, `on_leave`, `terminated`; §6.1).
+- **Lists (§2.3–2.4):**
+  - `page` is 1–1,000,000 and `per_page` 1–100 (default 25); a page past the end returns empty `data` with correct `meta`;
+  - `sort=field` / `-field` against a **per-endpoint allowlist**: employees `employee_number` (default), `last_name`, `hired_on`, `created_at`; report `employee_number`, `last_name`, `amount`;
+  - **invalid values return `400`** (never silently corrected).
+- **Shared filters:**
+  - employees: `q`, `country_id`, `department_id`, `employment_status` (default: all statuses);
+  - analytics: `as_of`, `country_id`, `department_id`, `employment_status` (default `active` + `on_leave`);
+  - report: the analytics filters plus `q`.
+- **Money:** a decimal string already rounded to the currency's minor units (JPY `"250000"`, KWD `"1500.125"`), always with `currency_code`, monthly.
+- **Already built:** `LoadingState` and `ErrorAlert` (F3.1, R15). The sign-in form has its own inline field and error markup (the first form in the app).
+- **Tension with the "only when needed" rule:** F4 builds components before any page uses them. The components below are justified by **confirmed consumers** in F5–F7:
+
+| Component | Consumers | Keep in F4? |
+|---|---|---|
+| `Pagination` | employee list (F5.1), salary report (F7.2) | Yes |
+| `DataTable` with sortable headers | employee list, salary report (and possibly the history table, F6.1) | Yes (S2) |
+| `SearchInput` | employee list, salary report | Yes |
+| Country / department / status selects | employee filters and form (F5), dashboard (F7.1), report (F7.2) | Yes |
+| `CurrencySelect` | new-employee initial salary (F5.3), salary change and correction (F6.2) | Yes |
+| `MoneyAmount` | employee detail (F5.2), history (F6.1), dashboard (F7.1), report (F7.2) | Yes |
+| `EmploymentStatusBadge` | employee list and detail (F5), report (F7.2) | Yes |
+| `EmptyState` | lists, dashboard, report | Yes |
+| `FormField` + 422 mapping | sign-in (existing), employee forms (F5.3), salary dialogs (F6.2) | Yes |
+| `SalaryStatusBadge` | salary history only (F6.1) | **No:** move to `components/salaries/` in F6.1 |
+| `DateText` | none needed: dates are shown as the API's `YYYY-MM-DD` strings | **Drop** |
+| `ConfirmDialog` | no confirmed use (no deletes; salary change and correction are already form dialogs) | **Defer** until a feature needs it |
+| `PageHeader` | not needed yet (a heading per page) | **Defer** (as in F1.2) |
+
+#### A. Missing decisions
+
+**Owner decisions (2026-09-29):** S1–S13 approved as recommended (scope per the consumer map, generic `DataTable`, URL list state rules, string-only money formatting).
+
+| ID | Decision | Recommendation | Needed by |
+|---|---|---|---|
+| S1 | **Scope of F4.** | Build only the components marked "Yes" above. Drop `DateText`; move `SalaryStatusBadge` to F6.1; defer `ConfirmDialog` and `PageHeader`. Keep props minimal (what F5–F7 need), and revisit them when the first consumer (F5.1) uses them. The alternative, folding F4 into F5 (building each piece with its first page), was rejected: the pieces serve 2–4 features and are easier to test in isolation | F4.1 |
+| S2 | **`DataTable`** (the owner's "datatable"). | A generic `DataTable<Row>` in `components/common/`. <br>- **Configured by** a column list (`header`, `cell(row)`, optional `sortField`), plus `rows`, a `caption`, and `sort`/`onSortChange`. <br>- **States:** renders loading (`LoadingState`), error (`ErrorAlert` with Retry), and empty (`EmptyState`). <br>- **Sorting is server-side only:** a header click emits `field` / `-field`, and the column shows `aria-sort`. <br>- **Not included:** client sorting, row selection, or column hiding. <br>Sortable headers live inside `DataTable`, with no separate `SortableHeader` file (one consumer) | F4.2 |
+| S3 | **`Pagination`.** | Reads the API `meta`. <br>- **Navigation:** First, Previous, Next, and Last buttons, plus "Page 2 of 378" (no numbered page list, which would add little at 10k rows). <br>- **Range text:** "Showing 26–50 of 9,429". <br>- **Page size:** a selector (25, 50, 100). <br>- **Accessibility:** `<nav aria-label="Pagination">`; buttons disabled at the ends. <br>- **A page past the end** (possible after filtering): an empty state with "Go to first page" | F4.1 |
+| S4 | **List state in the URL: `hooks/useListParams`.** | Keeps `page`, `per_page`, `sort`, and the filters (`country_id`, `department_id`, `employment_status`, `as_of`) in the URL query string (FD6b); `q` stays in component state only. <br>- **Invalid or tampered values** are replaced by defaults before the request (page not a positive integer or over 1,000,000; `per_page` not 25/50/100; a sort not in the caller's allowlist; a non-numeric ID; an unknown status; a malformed date), so a hand-edited URL never causes a `400` loop. <br>- **Resets:** changing a filter, `q`, or `per_page` resets `page` to 1. <br>- **History:** page moves add history entries; filter changes replace the current one | F4.1 |
+| S5 | **`SearchInput`.** | A labelled text input with `maxLength={100}` (the API limit), a Clear button, and a **300 ms debounce**; Enter searches immediately. It emits a trimmed value; an empty value means "no search" | F4.1 |
+| S6 | **Reference data service and hooks.** | **Service:** `services/referenceService.ts` (object: `getCountries`, `getDepartments`, `getCurrencies`) with `services/reference.types.ts` (`Country`, `Department`, `Currency`, and the `EmploymentStatus` enum with its labels). **Hooks:** `hooks/useReferenceData.ts` (`useCountries`, `useDepartments`, `useCurrencies`) with `staleTime: Infinity`: loaded once per session and cleared on sign-out (R6). **Statuses:** the fixed enum is used (no endpoint exists; the values come from API §6.1, not a business rule) | F4.1 |
+| S7 | **Selects.** | `components/common/ReferenceSelects.tsx` exports `CountrySelect`, `DepartmentSelect`, `EmploymentStatusSelect`, and `CurrencySelect`: one file, four small components over a shared inner select. <br>- **Common props:** a label, and a value that is the ID or code as a string. <br>- **Filter mode** (an "All …" option) or **form mode** (required, with a "Choose …" placeholder and an `error`). <br>- **While loading:** disabled, "Loading…". **On error:** disabled, with a short message. <br>- **Currency options** show `code — name` | F4.1 |
+| S8 | **`MoneyAmount`.** | Shows the API string with thousands separators added by **string manipulation** (no float), followed by the currency code: `85,000.00 INR`, `250,000 JPY`, `1,500.125 KWD`. <br>- **Currency code, not symbols:** `$` is ambiguous between USD and SGD. <br>- **"/ month" suffix:** optional (`monthly` prop), used where no column header already says "Monthly". <br>- An unexpected string is shown as-is | F4.2 |
+| S9 | **`EmploymentStatusBadge`.** | Labels: Active (`success`), On leave (`warning`), Terminated (`secondary`). The text is always shown, so meaning doesn't depend on colour | F4.2 |
+| S10 | **Forms: `FormField` and `fieldErrors`.** | **`FormField`:** a label, the control, and invalid feedback, with `aria-invalid` and `aria-describedby` wired (the F3.1 lesson). **`fieldErrors(error)`:** maps a `422 validation_failed` `ApiError.details` to `{ field: "message" }`, keeping nested keys such as `initial_salary.amount`. Refactor `SignInPage` to use `FormField` (its second consumer) | F4.2 |
+| S11 | **`EmptyState`.** | A message plus an optional action (e.g. "Clear filters"), announced politely (`role="status"`) | F4.1 |
+| S12 | **Count formatting.** | Record counts (not money) use `Intl.NumberFormat("en-US")`, e.g. "9,429", through a small `formatCount` in `components/common/format.ts`. It is shared by `Pagination` and later the dashboard counts | F4.1 |
+| S13 | **Testing and validation.** | Each component is tested in isolation (React Testing Library), and the hooks with `renderHook` plus `MemoryRouter`. `referenceService` is tested with MSW. `MoneyAmount` has JPY, KWD, 2-decimal, and large-value cases, and a test that it never uses `Number`. **No E2E or screenshots in F4:** no page uses these components yet. Their first real-API and visual check is F5.1 (employee list), recorded there | F4.1 / F4.2 |
+
+#### B. Assumptions
+- **No backend change.** Reference data and list parameters work exactly as API v2.1 specifies.
+- The component list is final for F5–F7 as planned. A new shared need found later is added in the subphase that needs it (the module workflow), not in advance.
+- English labels only (FD4). Numbers use en-US grouping (e.g. `9,429`, `85,000.00`).
+
+#### C. Dependencies
+
+| Dependency | Blocks | Owner |
+|---|---|---|
+| ~~Approval of S1–S13~~ Approved 2026-09-29 | F4.1 | Project owner |
+| F3 committed (clean starting point) | F4.1 | Project owner |
+
+#### D. Risks
+
+| Risk | Likelihood / impact | Mitigation |
+|---|---|---|
+| Components designed ahead of use don't fit F5–F7 | Medium / Medium | S1 consumer map; minimal props; revisit in F5.1 |
+| `DataTable` grows into an over-engineered grid | Medium / Medium | S2 scope: server sorting, states, and caption only |
+| A tampered or stale URL causes repeated `400`s | Medium / Low | S4 sanitises URL values against the caller's allowlist |
+| Money shown wrongly (float rounding, lost decimals, wrong grouping) | Low / High | S8 string-only formatting; tests with JPY, KWD, and large values |
+| Search sends too many requests (each one refreshes the idle timer) | Low / Low | S5 300 ms debounce; `maxLength` 100 |
+| Accessibility regressions in tables and forms | Medium / Medium | Caption, `th scope`, `aria-sort`, a labelled pagination nav, and `FormField` ARIA wiring, each with a test |
+
+### F4.1 Data, lists, and filters
+**Prompt:** `Per S1, S3–S7, S11–S13: referenceService + reference.types.ts and useReferenceData hooks; ReferenceSelects (country, department, employment status, currency) in components/common; useListParams (URL state, sanitised, q excluded) in hooks; SearchInput; Pagination; EmptyState; formatCount. Tests for each; lint, typecheck, test, build.`
+**Tasks:**
+1. ~~Owner: approve S1–S13.~~ Approved 2026-09-29.
+2. ~~`src/services/referenceService.ts`, `src/services/reference.types.ts`, with MSW tests.~~ Done 2026-09-29. `reference.types.ts` holds `Country`, `Department`, `Currency`, and the `EMPLOYMENT_STATUSES` enum with its labels and `isEmploymentStatus`.
+3. ~~`src/hooks/useReferenceData.ts` and `src/hooks/useListParams.ts`, with tests.~~ Done 2026-09-29.
+4. ~~`src/components/common/ReferenceSelects.tsx`, `SearchInput.tsx`, `Pagination.tsx`, `EmptyState.tsx`, `format.ts`, with tests.~~ Done 2026-09-29.
+5. ~~Validation.~~ Done 2026-09-29; see the status.
+6. ~~Record.~~ Done 2026-09-29.
+
+**Acceptance:** Every S3–S7, S11, S12 behaviour has a test; invalid URL values never reach the API; lint, typecheck, and build are clean.
+**Status:** Done (2026-09-29).
+- **Checks under Node 22.23.3:** `npm run format`, `typecheck`, `lint` (zero warnings), `test` (**15 files, 90 tests**; 30 new), and `build` all exit 0. The bundle is unchanged (344.9 kB), because no page uses the new components yet.
+- **Mutation checks** (file restored each time):
+  - `q` written to the URL → "keeps the search text out of the URL" fails;
+  - sort not checked against the allowlist → "replaces tampered or invalid values" fails.
+- **No E2E or screenshots, by design (S13):** no page uses these components yet. Their first real-API and visual check is F5.1.
+
+**Tests cover:**
+- `referenceService`: lists, and error pass-through.
+- `useReferenceData`: one request shared by consumers.
+- `useListParams`:
+  - defaults, valid URL values, and tampered values (page, per_page, sort, IDs, status, date; unknown keys ignored);
+  - the page cap and impossible dates;
+  - a filter change resets the page (history replace); page moves push history; defaults are left out of the URL;
+  - `q` never reaches the URL.
+- `ReferenceSelects`: filter options and the chosen ID; loading; load error; form mode (required, placeholder, `aria-invalid`, accessible description); statuses without a request.
+- `SearchInput`: the exact 300 ms debounce (fake timers), Enter at once without a second call, Clear, `maxLength` 100, the visible label.
+- `Pagination`: range text with grouping, button states at both ends, a partial last page, no results, past the end → first page, page size.
+- `EmptyState` and `formatCount`.
+
+Notes:
+- **`useListParams` API:** `useListParams({ sortFields, defaultSort, filters })` returns `page`, `perPage`, `sort`, `filters`, `q`, a ready-to-send `query`, and setters. Filters not listed for a page are ignored even if present in the URL.
+- **Test support:** `src/test/fixtures/referenceData.ts` (synthetic lists with request counters) and a `renderWithQueryClient` helper in `src/test/render.tsx`.
+- **Selects:** one file, four small components over a shared inner `SelectField`. Form mode wires `aria-invalid` and `aria-describedby` itself; F4.2's `FormField` covers text inputs.
+- **Lint lesson:** in tests, `act(() => vi.advanceTimersByTime(n))` returns a value and picks React's async `act`, a floating promise. Use a block body.
+
+### F4.2 Tables, display, and forms
+**Prompt:** `Per S2, S8–S10, S13: DataTable (columns, server-side sort with aria-sort, loading/error/empty states, caption), MoneyAmount (string-only grouping, currency code, optional monthly), EmploymentStatusBadge, FormField + fieldErrors (422 details), and refactor SignInPage onto FormField. Tests for each; lint, typecheck, test, build; the sign-in E2E still passes.`
+**Tasks:**
+1. ~~`DataTable.tsx`, `MoneyAmount.tsx`, `EmploymentStatusBadge.tsx`, `FormField.tsx`, and `fieldErrors`, with tests.~~ Done 2026-09-29. `formatMoney` lives in `components/common/format.ts` next to `formatCount`, so component files export only components.
+2. ~~Refactor `SignInPage` onto `FormField`; existing tests unchanged.~~ Done 2026-09-29. The sign-in tests (26 across auth, routing, and layout) passed without edits.
+3. ~~Validation, including `npm run e2e` with the R13 temporary user and explicit cleanup.~~ Done 2026-09-29; see the status.
+4. ~~Record.~~ Done 2026-09-29.
+
+**Acceptance:** Every S2 and S8–S10 behaviour has a test; money is never converted to a number; the sign-in page behaves exactly as before (unit and E2E); lint, typecheck, and build are clean.
+**Status:** Done (2026-09-29).
+- **Checks under Node 22.23.3:** `npm run format`, `typecheck`, `lint` (zero warnings), `test` (**18 files, 107 tests**; 17 new), and `build` all exit 0. JS bundle 344.8 kB (109.0 kB gzip).
+- **E2E against the real API** (Claude's Rails on :3120, Vite on :5186, temporary user): **6 passed** in 4.3 s, including the sign-in journeys on the refactored form.
+- **Cleanup in explicit steps, verified:** deleted=1, `User.count` = 1, no saved-session file, ports free.
+- **Mutation check:** with float-based formatting (`Number(...).toLocaleString`), "values beyond floating-point precision stay exact" fails; restored.
+
+**Tests cover:**
+- `DataTable`: caption name, `th scope`, rows; `aria-sort` on the sorted column only; the sort cycle; no button on non-sortable columns; loading, error + Retry, and empty + action states; `aria-busy` while refreshing.
+- `formatMoney` / `MoneyAmount`: grouping with exact decimals (JPY, KWD, 2-decimal); a value beyond float precision; unexpected strings unchanged; the currency code; the optional "/ month".
+- `EmploymentStatusBadge`: labels and variants.
+- `FormField`: label, pass-through props, `aria-invalid`, and the error + hint description.
+- `fieldErrors`: 422 details including nested keys and joined messages; `{}` for other errors.
+
+Notes:
+- **`FormField` typing:** `ComponentProps<typeof Form.Control>` loses the `onChange` event type through react-bootstrap's polymorphic typing (implicit `any`). `FormField` is typed as `FormControlProps` plus the standard input attributes.
+- **Sort indicators** (▲ ▼ ↕) are `aria-hidden`; screen readers get the sort state from `aria-sort` on the header.
+- **`fieldErrors` joins several messages** for one field with "; " (e.g. "must be greater than 0; must have at most 2 decimal places for this currency").
+
+**F4 gate: passed on 2026-09-29.** The shared components (S1 consumer map) are built and tested in isolation (F4.1, F4.2), follow the data-display rules (string-only money, currency codes, labelled statuses) and the accessibility rules (labels, `aria-invalid`/`aria-describedby`, `aria-sort`, captions, a labelled pagination nav), and the refactored sign-in page still passes its unit and E2E tests. The first page-level use and visual check is F5.1.
 
 **Phase gate:** Shared components are tested and follow the display and accessibility rules.
 
@@ -530,29 +658,126 @@ Notes:
 ## Phase F5 — Employees
 **Goal:** Search, view, create, and update employees (FR-01, FR-04).
 
+### F5 review findings (2026-09-29)
+
+Inputs: API spec v2.1 §6.1–§6.4 (list, detail, create, update), §2 (pagination and sort), §10, §13; requirements FR-01, FR-02 (initial salary), FR-04, D14, D18, I13; the F1.1 page map; gaps G1 and G3; the F3/F4 code (routes, layout, `useListParams`, `DataTable`, `Pagination`, `SearchInput`, selects, `FormField`, `fieldErrors`, `MoneyAmount`, `EmploymentStatusBadge`). No code written. Observed:
+- **List (§6.1):**
+  - items: `{id, employee_number, first_name, last_name, country{id,code,name}, department{id,name}, employment_status, hired_on}`, with **no email or salary** (D18);
+  - filters `q`, `country_id`, `department_id`, `employment_status` (default: all statuses); sort `employee_number` (default), `last_name`, `hired_on`, `created_at`.
+- **Detail (§6.2):** adds `email`, `current_salary` (`{id, amount, currency_code, period, effective_from, effective_to}`, or `null` when nothing is in effect today), and timestamps.
+- **Create (§6.3):**
+  - body wrapped in `employee`, with an optional `initial_salary` created in the same transaction (D14);
+  - `422` field errors use the request field names (`country_id`, `department_id`, `initial_salary.amount`, `initial_salary.currency_code`); the API upper-cases `employee_number` and lower-cases `email`; `employment_status` defaults to `active`.
+- **Update (§6.4):** any subset of the same fields except `initial_salary`; salary never changes here. Moving `hired_on` after the first salary start → `422` (I13). Returns `404` or `422`.
+- **There is no delete:** termination is `employment_status = terminated`.
+- **Not in F5:**
+  - the salary report page (G1) does not exist until F7.2, so the "link to the salary report" from the list is **added in F7.2** (no dead links, R9);
+  - salary history belongs to F6 (salaries).
+- **Home page:** F3.2's Home placeholder was meant to become a redirect to `/employees` in F5.1 (R9 note).
+
+#### A. Missing decisions
+
+**Owner decisions (2026-09-29):** T1–T11 approved as recommended.
+
+| ID | Decision | Recommendation | Needed by |
+|---|---|---|---|
+| T1 | **Routes and Home.** | Routes: `/employees` (list), `/employees/new`, `/employees/:id`, `/employees/:id/edit`. `/` redirects to `/employees`. **Remove the Home placeholder** (`components/dashboard/HomePage.tsx`): the dashboard arrives in F7.1 at `/dashboard`, and whether `/` points there instead is decided in F7.1. The sidebar lists **Employees** (replacing Home) | F5.1 |
+| T2 | **Service and types.** | `services/employeeService.ts` (object: `list(query)`, `get(id)`, `create(input)`, `update(id, changes)`) and `services/employee.types.ts` (`EmployeeSummary`, `EmployeeDetail`, `CurrentSalary`, `EmployeeInput`, `InitialSalaryInput`, and the list query type), mirroring §6 | F5.1 |
+| T3 | **Query keys and cache.** | `["employees", "list", query]` with `placeholderData: keepPreviousData` (the previous page stays visible, and `DataTable` shows busy while the next loads); `["employees", "detail", id]`. After a create or update, the detail cache is set from the response and `["employees", "list"]` is invalidated | F5.1 |
+| T4 | **List page.** | **Columns:** Employee number (a link to the detail page), Name shown as "Last, First" (matching the `last_name` sort), Country, Department, Status (badge), Hired on. **Sortable:** number, name, hired on. **Controls:** search (`q`), country, department, and status filters, Clear filters, a **New employee** button, pagination. **Empty:** "No employees match these filters." with Clear filters. **Never shows email or salary** (D18, tested). `created_at` sort is supported by the API but not shown as a column (no use case) | F5.1 |
+| T5 | **Back to the list keeps the filters.** | Links from the list carry the current list URL in `location.state.from` (path and search; no `q`, FD6b). The detail page's "Back to employees" uses it when it is an internal `/employees` path, otherwise plain `/employees` | F5.2 |
+| T6 | **Detail page.** | **Heading:** "Last, First (EMP-…)". **Profile:** number, name, email (or "—"), country, department, status badge, hired on. **Current salary:** `MoneyAmount` with "/ month" and "Effective from …", or **"No salary in effect today"**. **Actions:** Edit, Back. A **404** (or a non-numeric ID, which is never requested) shows "Employee not found" (generic, no ID echoed). **Salary history and the change and correction actions are added to this page by F6** (in `components/salaries/`), so F5 doesn't build a history summary | F5.2 |
+| T7 | **Create and edit form.** | One `components/employees/EmployeeForm.tsx` for both, with fields: <br>- employee number (max 20, with a hint "Letters, digits, and '-'"); first and last name (max 100); email (optional, `type="email"`); <br>- country and department (required selects); status (form select, default Active on create); hired on (`type="date"`, optional). <br>**Client checks are basic only** (required fields; the browser's email and date inputs); formats and uniqueness are left to the API's `422` (not duplicated). **Errors:** `422` details → fields via `fieldErrors`; anything else → `ErrorAlert` | F5.3 |
+| T8 | **Initial salary on create (D14).** | An "Add initial salary" switch reveals: amount (a **text** input with `inputMode="decimal"`, never `type="number"`, so no float or locale conversion), currency (`CurrencySelect`; the user chooses, G3), and effective from (date, defaulting to the hired-on date if set). The API validates the decimal places per currency; `initial_salary.*` errors map to these fields. Everything is sent in one request; if anything fails, nothing is created | F5.3 |
+| T9 | **Edit sends only changed fields.** | The update sends only the fields that changed (the API accepts any subset), and Save stays disabled until something changes. Clearing email sends `""` (the API stores `null`). **Termination** = changing status to Terminated in this form (no delete). The I13 error shows under Hired on | F5.3 |
+| T10 | **After saving.** | Create → go to the new employee's detail page with "Employee created."; edit → back to the detail page with "Changes saved." These notices are passed in navigation state (shown once, `role="status"`). Cancel returns to the detail page (edit) or the list (create). No "unsaved changes" prompt (not required) | F5.3 |
+| T11 | **E2E and test data** (FD7). | **F5.1 (read-only on demo data):** list loads; country filter + search; sort by name; next page; open a detail page. **F5.3:** create `EMP-E2E-<base36 timestamp>` (at most 20 characters) with an initial salary → detail shows it → edit its department → "Changes saved.". Demo employees are never edited. Tests reuse the saved session (no extra sign-ins) | F5.1 / F5.3 |
+
+#### B. Assumptions
+- **No backend change.** API v2.1 §6 covers all of FR-01 and FR-04.
+- The employee list defaults to **all** statuses (§6.1); analytics and reports keep their own defaults (§13).
+- Created E2E employees stay in the dev database (FD7); `bin/rails demo:reset` restores the demo data.
+- The screens are validated against the 10k demo data (one page at a time; no list loads all employees).
+
+#### C. Dependencies
+
+| Dependency | Blocks | Owner |
+|---|---|---|
+| ~~Approval of T1–T11~~ Approved 2026-09-29 | F5.1 | Project owner |
+| F4 components and hooks | F5.1–F5.3 | Done |
+| Commit of F4 + F5 (the owner commits them together) | — | Project owner |
+
+#### D. Risks
+
+| Risk | Likelihood / impact | Mitigation |
+|---|---|---|
+| Email or salary leak into the list | Low / High | D18; the list type has no such fields; a test asserts none are rendered |
+| Money typed or sent as a float | Low / High | T8 text input; the string is sent as typed; the API validates scale |
+| Filters lost when going back from detail | Medium / Low | T5 `state.from` |
+| Editing overwrites fields that weren't touched | Low / Medium | T9 changed fields only |
+| E2E test data mixes with demo data | Certain / Low | T11 `EMP-E2E-*` prefix; demo rows never edited; `demo:reset` |
+| Slow list at 10k rows | Low / Low | Server pagination (25 by default); `keepPreviousData`; measured at 9–72 ms (backend 6.2) |
+
 ### F5.1 Employee list
-**Prompt:** `employeeService + employee.types.ts (src/services/) and the employees page (src/components/employees/): q search, country/department/status filters, allowlisted sort, pagination (URL state except q), links to detail and to the salary report (G1); loading, empty, and error states.`
-**Tests and validation:**
-- component tests (MSW): filters, sort, pagination, empty result, `400` handling, no salary or email shown;
-- E2E: search and filter, then open an employee;
-- manual check on the 10k demo data.
-**Status:** Not Started
+**Prompt:** `Per T1–T4 and T11: employeeService + employee.types.ts; routes /employees (and / → /employees; remove the Home placeholder; sidebar "Employees"); EmployeeListPage in components/employees with DataTable, SearchInput, the filter selects, Clear filters, New employee (link to /employees/new, which arrives in F5.3), and Pagination via useListParams. Module workflow: component tests (MSW), E2E on demo data, screenshot, record.`
+**Tasks:**
+1. ~~Owner: approve T1–T11.~~ Approved 2026-09-29.
+2. ~~`employeeService.ts` + `employee.types.ts`, with MSW tests.~~ Done 2026-09-29.
+3. ~~`EmployeeListPage`; routes and sidebar; remove the Home placeholder.~~ Done 2026-09-29. Also added `components/employees/useEmployees.ts` (query keys and hooks, T3). `/` redirects to `/employees`, the sidebar lists Employees, and NotFound links to the employee list. The "New employee" button arrives with its page in F5.3 (no dead links).
+4. ~~Tests.~~ Done 2026-09-29: `services/employeeService.test.ts` and `components/employees/EmployeeListPage.test.tsx`; the auth, routing, layout, and common tests were updated for the Home removal.
+5. ~~E2E, screenshot, validation, record.~~ Done 2026-09-29, run together with F5.2 (the list → detail journey spans both); see F5.2.
+
+**Acceptance:** The list works on the real 10k demo data with search, filters, sort, and pagination; no email or salary is shown; all tests and E2E pass.
+**Status:** Done (2026-09-29).
+
+Notes:
+- **Bug found by a test (fixed):** "Clear filters" called `clearFilters()` and `setQ("")` in the same tick. React Router's `setSearchParams(fn)` works from the params captured at render, not a queued value, so the second update overwrote the first and the filters stayed. `useListParams.clearFilters()` now clears the filters **and** the search text in one update (also covered in `useListParams.test.tsx`).
+- **Flaky test found and fixed at the root:** a request started at the end of one test (the fresh-token fetch after expiry) could land on the next test's mock handlers, occasionally breaking a token-counting assertion (seen once in about 10 runs). `src/test/setup.ts` now waits for every test query client to be idle, then clears it, before unmounting and resetting MSW (`settleQueryClients` in `src/test/render.tsx`). Verified with 6 consecutive full runs, 3 of them shuffled.
+- **Test support:** default MSW handlers (`src/test/fixtures/defaultHandlers.ts`) serve the reference lists and an empty employee list to every test. Tests override them with `server.use`, and unmocked requests still fail. Also `employees.ts` and `employeeDetail.ts` fixtures.
+- **Accessibility fix found by E2E:** the search box's "Clear" button and "Clear filters" shared the name "Clear". The search button's accessible name is now "Clear search" (visible text still "Clear"). Playwright label and role matching is substring-based, so E2E locators use `exact: true` where names overlap.
 
 ### F5.2 Employee detail
-**Prompt:** `Employee detail: profile, current salary (or none), and a salary history summary; generic 404 page for unknown employees.`
-**Tests and validation:**
-- component tests: with and without a current salary; `404`;
-- E2E step: open detail from the list;
-- manual check.
-**Status:** Not Started
+**Prompt:** `Per T5–T6: EmployeeDetailPage in components/employees: heading, profile, current salary (MoneyAmount, monthly, effective from) or "No salary in effect today", Edit and Back (keeps list filters via state.from), and a generic "Employee not found" for 404 or non-numeric IDs. Tests, E2E step, screenshot, record.`
+**Tasks:**
+1. ~~`EmployeeDetailPage.tsx` and its route.~~ Done 2026-09-29, plus `useEmployee`, `parseEmployeeId`, and `employeeListReturnPath` in `useEmployees.ts`. Edit arrives with its page in F5.3.
+2. ~~Tests.~~ Done 2026-09-29: `components/employees/EmployeeDetailPage.test.tsx` (11 tests).
+3. ~~E2E, screenshot, validation, record.~~ Done 2026-09-29.
+
+**Acceptance:** Detail matches API §6.2; missing employees are handled generically; Back keeps the list's filters; all tests pass.
+**Status:** Done (2026-09-29).
+- **Checks under Node 22.23.3:** `npm run format`, `typecheck`, `lint` (zero warnings), `test` (**21 files, 130 tests**), and `build` all exit 0. JS bundle 361.4 kB (114.2 kB gzip).
+- **E2E against the real API and the 10k demo data** (Claude's Rails on :3123, Vite on :5189, temporary user): **8 passed** in 6.9 s. New in F5:
+  - the list searches ("EMP-0001"), keeps the search text out of the URL, filters by India, sorts by name, and pages to "Showing 26–50";
+  - filter On leave → open the first employee → detail shows their profile and current salary → Back returns to the same filtered URL.
+  - Two earlier runs failed on the ambiguous "Clear" and "Search" names (fixed above). Each run's temporary user was deleted and verified (`User.count` = 1, no saved-session file, ports free), and there was a 65 s wait before the final run for the sign-in rate limit.
+- **Visual check** (screenshots reviewed): the list on real data (filters row, sort indicators, "Last, First", badges, no email or salary); the detail page (Back link, "Baumbach, Summer (EMP-00001)", Profile card, "6,495.91 SGD / month, Effective from 2012-05-10").
 
 ### F5.3 Create and edit employee
-**Prompt:** `New employee form with optional initial salary (currency chosen by the user, G3) and edit form (including termination via employment_status), showing 422 details per field; cache invalidation after save.`
-**Tests and validation:**
-- component tests: required fields, the API's `422` mapped to fields (including `initial_salary.*`), success redirect;
-- E2E: create an employee with an initial salary, then edit it;
-- manual check.
-**Status:** Not Started
+**Prompt:** `Per T7–T10: EmployeeForm (shared), EmployeeCreatePage (optional initial salary, T8) and EmployeeEditPage (changed fields only, T9); 422 details mapped to fields incl. initial_salary.*; notices after saving; cache update and list invalidation (T3). Tests, E2E (create EMP-E2E-* with initial salary, then edit), screenshots, record.`
+**Tasks:**
+1. ~~`EmployeeForm.tsx`, `EmployeeCreatePage.tsx`, `EmployeeEditPage.tsx`, and routes.~~ Done 2026-09-29, plus `employeeFormValues.ts` (form values, required checks, create body, changed fields). The "New employee" button (list) and "Edit" button (detail) arrive with their pages.
+2. ~~Tests.~~ Done 2026-09-29:
+   - `employeeFormValues.test.ts` (4 tests);
+   - `EmployeeCreatePage.test.tsx` (6 tests): required checks with no request; create without and with an initial salary (effective from pre-filled from the hire date; amount a decimal text input sent as typed); `422` on `employee_number` and `initial_salary.amount`; Cancel; the New employee button;
+   - `EmployeeEditPage.test.tsx` (7 tests): current values and Save disabled; changed fields only; clear email plus terminate; I13 error under Hired on; Cancel; not found; the Edit button.
+3. ~~E2E, screenshots, validation, record.~~ Done 2026-09-29.
+
+**Acceptance:** Employees can be created (with or without an initial salary) and updated against the real API, with field-level validation feedback; nothing is created on failure; all tests and E2E pass.
+**Status:** Done (2026-09-29).
+- **Checks under Node 22.23.3:** `npm run format`, `typecheck`, `lint` (zero warnings), `test` (**24 files, 147 tests**), and `build` all exit 0. JS bundle 369.6 kB (116.2 kB gzip).
+- **E2E against the real API** (Claude's Rails on :3124, Vite on :5190, temporary user): **10 passed** in 8.6 s. New:
+  - create `EMP-E2E-*` with an INR initial salary → "Employee created." and "85,000.00 INR / month" → edit department → "Changes saved." and Finance shown;
+  - a duplicate `EMP-00001` → the real API's "has already been taken" under Employee number, nothing created, still on `/employees/new`.
+- **Cleanup verified:** temporary user deleted (`User.count` = 1), no saved-session file, ports free. **Data added by this run: exactly one employee, `EMP-E2E-MUMY73UI`** (FD7). The dev database also holds `SUMIT`, which is not from Claude's runs.
+- **Mutation check:** with the edit sending every field, 3 edit tests fail; restored.
+- **Visual check** (screenshot reviewed): the create form with the real API error (alert, the field error with its icon, hint) and the initial-salary section (switch, amount, currency, effective from).
+
+Notes:
+- **API behaviour observed (G8, no change made):** when both the employee and the initial salary are invalid, the API reports only the employee's errors. Its create service saves the employee first and rolls back as soon as that fails, so salary errors (e.g. JPY decimals) appear on the next attempt. Nothing is ever created wrongly; it only means two rounds of errors. A backend change would be needed to report both together.
+- **Native date inputs** show the browser's locale format (e.g. dd/mm/yyyy), but the value sent is always `YYYY-MM-DD`.
+- **Lint:** `mutationFn: employeeService.create` was flagged as an unbound method; it now uses an arrow function.
+
+**F5 gate: passed on 2026-09-29.** Search, filter, sort, page, view, create (with an optional initial salary), and edit (including termination) work against the real API and the 10k demo data, with field-level validation feedback from the API; the list never shows email or salary; all 147 component tests and 10 E2E journeys pass.
 
 **Phase gate:** The employee journeys work against the API with correct validation feedback; all module tests pass.
 
@@ -562,7 +787,7 @@ Notes:
 **Goal:** View history and record changes without losing it (FR-02, FR-03).
 
 ### F6.1 History view
-**Prompt:** `salaryService + salary.types.ts (src/services/) and the history table (src/components/salaries/) (newest first) using the API's status and editable flags and money per currency.`
+**Prompt:** `salaryService + salary.types.ts (src/services/), SalaryStatusBadge (moved here from F4 by S1), and the history table (src/components/salaries/) (newest first) using the API's status and editable flags and money per currency.`
 **Tests and validation:**
 - component tests: current, scheduled, and historical rows; mixed currencies; empty history;
 - manual check.
@@ -666,9 +891,19 @@ Notes:
 | 2026-09-29 | Services refactor | Owner samples: simpler services. Merged `services/api/{client,csrf,errors,types}` into `services/api.ts` (`apiRequest(path, options)` with `RequestInit` + `query`; `ApiError(message, status, code, details)` in the sample's order); `queryClient.ts` moved up; `authService` became an object (`getSession`, `signIn(credentials)`, `signOut`) with `auth.types.ts` (`User`, `SignInCredentials`, `Session`). **Kept from our contract** (the samples would break against this API): the `X-CSRF-Token` header, envelope parsing with `code`/`details` (`body.error` is an object), `{data: …}` responses, short paths under the base path (no `/api/v1` doubling), `credentials: same-origin`, the `401` handler, the R5 CSRF refresh/retry, abort and network handling, and `204`. Base path read at call time (testable override). Rules, skill, ADR 006, and plan updated | format, typecheck, lint, test (6 files, 44 tests), and build exit 0; **E2E 4/4 against the real API** (temporary user; cleanup in explicit steps, verified `User.count` = 1, ports free, auth file removed) | — |
 | 2026-09-29 | Plan alignment | Updated the remaining current and future text to the new structure: the F1.2 reusable-components list (layout and routing in `layouts/` and `routes/`; `PageHeader` only when needed), and the F4.1, F5.1, F6.1, F7.1, and F7.2 prompts (service object + types file in `src/services/`, pages in `src/components/<feature>/`, the filter helper as a shared hook in `src/hooks/`). R2 gained a pointer to the current files. Decision records (Q6, Q10, F2.2 prompt) kept as history | Documentation only; no code changes | — |
 | 2026-09-29 | F3.2 | React Router 8.4.0; `routes/` (AppRoutes, RequireAuth, returnPath with the R7 guard), `layouts/` (MainLayout, Header, responsive Sidebar per R9a), `components/dashboard/HomePage`, `components/common/` (NotFoundPage, ErrorBoundary, reportRenderError), `hooks/useDocumentTitle`; `BrowserRouter` and root error handlers in `main.tsx`; `SignInPage` return path. Test support: `MemoryRouter` in `render.tsx`, `screenSize.ts` (`matchMedia`). E2E `navigation.spec.ts`. F3 gate passed | format, typecheck, lint, test (9 files, 60 tests), and build exit 0; E2E 6/6 against the real API (temporary user, cleanup verified); open-redirect mutation caught; desktop and phone screenshots reviewed | Fixed along the way: React 19 logs full render errors by default (now name only); react-bootstrap `Navbar` role clash (plain `<header>`); unhighlighted active sidebar link (`pills`) |
+| 2026-09-29 | F4 (review) | Reviewed F4 against API §2.3/§2.4/§5/§6.1/§8.1/§9/§13, the frontend rules, the F5–F7 subphases, and the code after F3. Recorded S1–S13, a consumer map, assumptions, dependencies, and risks; rewrote F4.1 (data, lists, filters) and F4.2 (tables, display, forms). Key points: build only components with at least two confirmed consumers (drop `DateText`; `SalaryStatusBadge` moves to F6.1; defer `ConfirmDialog` and `PageHeader`); generic `DataTable` with server sort; URL list state sanitised against allowlists (no `400` loops); money grouped by string manipulation only; `FormField` with ARIA wiring and 422 mapping, with `SignInPage` refactored onto it | Read-only: API spec sections and the current frontend code. No code written | Owner: approve S1–S13 |
+| 2026-09-29 | F4 (S decisions) | Owner approved S1–S13 as recommended | Plan update only | — |
+| 2026-09-29 | F4.1 | `referenceService` + `reference.types.ts` (with the status enum and labels); `hooks/useReferenceData` (once per session) and `hooks/useListParams` (URL state sanitised against allowlists; `q` in state only); `components/common/ReferenceSelects` (country, department, status, currency; filter and form modes), `SearchInput` (300 ms debounce, Enter, Clear, max 100), `Pagination` (range, First/Previous/Next/Last, past end, page size), `EmptyState`, `format.ts` (`formatCount`). Test support: `referenceData` fixture, `renderWithQueryClient` | format, typecheck, lint, test (15 files, 90 tests), and build exit 0; 2 mutation checks (q in URL, sort allowlist) caught | No E2E by design (S13); first real-API and visual check in F5.1 |
+| 2026-09-29 | F4.2 | `components/common/DataTable` (column-driven, server sort with `aria-sort`, loading/error/empty, `aria-busy`), `MoneyAmount` + `formatMoney` (string-only grouping, currency code, optional "/ month"), `EmploymentStatusBadge`, `FormField` (ARIA-wired, typed with `FormControlProps`), `fieldErrors` in `services/api.ts`; `SignInPage` refactored onto `FormField` with its tests unchanged. F4 gate passed | format, typecheck, lint, test (18 files, 107 tests), and build exit 0; E2E 6/6 against the real API (temporary user, cleanup verified); float-formatting mutation caught | — |
+| 2026-09-29 | F5 (review) | Reviewed F5 against API §6.1–§6.4, §2, §10, §13, FR-01/02/04, D14, D18, I13, gaps G1/G3, and the F3/F4 building blocks. Recorded T1–T11, assumptions, dependencies, and risks; rewrote F5.1–F5.3 with tasks. Key points: `/` → `/employees` and the Home placeholder removed (dashboard later at `/dashboard`); the report link from the list waits for F7.2 (no dead links); salary history on the detail page belongs to F6; a shared create/edit form; the initial-salary amount is a text input (no float); edit sends changed fields only; E2E creates only `EMP-E2E-*` employees | Read-only: API spec §6 and the current frontend code. No code written | Owner: approve T1–T11 |
+| 2026-09-29 | F5 (T decisions) | Owner approved T1–T11 as recommended | Plan update only | — |
+| 2026-09-29 | F5.1, F5.2 | `employeeService` + `employee.types.ts`; `components/employees/` (`useEmployees`, `EmployeeListPage`, `EmployeeDetailPage`); `/` → `/employees`, Home placeholder removed, sidebar Employees; default MSW handlers and employee fixtures; `settleQueryClients` after each test. E2E `employees.spec.ts` | format, typecheck, lint, test (21 files, 130 tests), and build exit 0; E2E 8/8 on the real API and 10k demo data (temporary user; cleanup verified each run); list and detail screenshots reviewed | Fixed: Clear filters double URL update (bug); cross-test request leak (flaky test); ambiguous "Clear" button name (accessibility) |
+| 2026-09-29 | F5.3 | `components/employees/` `employeeFormValues.ts`, `EmployeeForm` (shared; 422 details to fields incl. `initial_salary.*`), `EmployeeCreatePage` (optional initial salary, T8), `EmployeeEditPage` (changed fields only, T9); New employee and Edit buttons; routes `/employees/new`, `/employees/:id/edit`. E2E `employee-forms.spec.ts`. F5 gate passed. Gap G8 recorded | format, typecheck, lint, test (24 files, 147 tests), and build exit 0; E2E 10/10 on the real API (temporary user; cleanup verified; one `EMP-E2E-*` employee created); edit-all-fields mutation caught; create-error screenshot reviewed | Owner: commit F4 + F5 together; `demo:reset` optional (would also remove `SUMIT`) |
 
 ## Current progress
 - **F1** — Frontend design and decisions — **Done (gate passed 2026-09-29)**
 - **F2** — Foundation — **Done (gate passed 2026-09-29)**. F2.1, F2.2 Done.
 - **F3** — Authentication and app shell — **Done (gate passed 2026-09-29)**. F3.1, F3.2 Done.
-- **Next:** F4 review (shared components), then F4.1
+- **F4** — Shared components — **Done (gate passed 2026-09-29)**. F4.1, F4.2 Done.
+- **F5** — Employees — **Done (gate passed 2026-09-29)**. F5.1, F5.2, F5.3 Done.
+- **Next:** owner commits F4 + F5; then the F6 review (salary history)

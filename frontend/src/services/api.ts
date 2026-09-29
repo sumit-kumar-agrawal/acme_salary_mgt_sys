@@ -63,6 +63,25 @@ export function userMessage(error: unknown): string {
   return error.message || generic;
 }
 
+/**
+ * Field messages from a `422 validation_failed` error (S10), keyed by the API's request field names,
+ * including nested keys such as "initial_salary.amount". Any other error gives {} (shown by ErrorAlert).
+ */
+export function fieldErrors(error: unknown): Record<string, string> {
+  if (
+    !isApiError(error) ||
+    error.code !== "validation_failed" ||
+    !error.details
+  )
+    return {};
+  return Object.fromEntries(
+    Object.entries(error.details).map(([field, messages]) => [
+      field,
+      messages.join("; "),
+    ]),
+  );
+}
+
 // ---- Session hooks (in memory only; set by AuthProvider) ----
 
 let csrfToken: string | null = null;

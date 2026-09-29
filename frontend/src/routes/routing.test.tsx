@@ -44,7 +44,7 @@ describe("routing", () => {
     expect(currentLocation()).toBe("/no-such-page?page=2");
   });
 
-  it("ignores an external return path and goes Home instead", async () => {
+  it("ignores an external return path and goes to the employee list instead", async () => {
     mockSessionBackend();
     renderWithProviders(<App />, {
       route: { pathname: "/sign-in", state: { from: "//evil.example/steal" } },
@@ -53,9 +53,9 @@ describe("routing", () => {
     await signIn();
 
     expect(
-      await screen.findByRole("heading", { name: "Home" }),
+      await screen.findByRole("heading", { name: "Employees" }),
     ).toBeInTheDocument();
-    expect(currentLocation()).toBe("/");
+    expect(currentLocation()).toBe("/employees");
   });
 
   it("sends a signed-in user away from /sign-in", async () => {
@@ -63,14 +63,14 @@ describe("routing", () => {
     renderWithProviders(<App />, { route: "/sign-in" });
 
     expect(
-      await screen.findByRole("heading", { name: "Home" }),
+      await screen.findByRole("heading", { name: "Employees" }),
     ).toBeInTheDocument();
-    expect(currentLocation()).toBe("/");
+    expect(currentLocation()).toBe("/employees");
   });
 
   it("shows a generic not-found page for unknown URLs, without echoing the path", async () => {
     mockSessionBackend({ signedIn: true });
-    renderWithProviders(<App />, { route: "/employees/<script>" });
+    renderWithProviders(<App />, { route: "/no-such-area/<script>" });
 
     expect(
       await screen.findByRole("heading", { name: "Page not found" }),
@@ -78,9 +78,8 @@ describe("routing", () => {
     expect(
       within(screen.getByRole("main")).queryByText(/script/),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Go to Home" })).toHaveAttribute(
-      "href",
-      "/",
-    );
+    expect(
+      screen.getByRole("link", { name: "Go to employees" }),
+    ).toHaveAttribute("href", "/employees");
   });
 });

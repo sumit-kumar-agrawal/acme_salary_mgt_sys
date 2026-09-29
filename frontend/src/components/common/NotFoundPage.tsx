@@ -9,7 +9,7 @@ export default function NotFoundPage() {
     <>
       <h1 className="h3">Page not found</h1>
       <p>The page you asked for does not exist.</p>
-      <Link to="/">Go to Home</Link>
+      <Link to="/employees">Go to employees</Link>
     </>
   );
 }
