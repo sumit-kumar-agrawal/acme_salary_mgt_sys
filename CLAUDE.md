@@ -54,7 +54,7 @@ Path-scoped rules load automatically from `.claude/rules/` when matching files a
 
 ## Current Plan
 
-Frontend work follows FRONTEND_PLAN.md (phases, decisions, status, and completion log). The backend is complete; BACKEND_PLAN.md records its phases, decisions, and known limitations, and supersedes the backend phases of PROJECT_DEV_PLAN.md. Do not modify the Rails backend during frontend work unless a change is approved in FRONTEND_PLAN.md.
+The frontend is complete (FRONTEND_PLAN.md F1–F9: phases, decisions, requirement → test matrix, status, and completion log); new frontend work adds to that plan. The backend is complete; BACKEND_PLAN.md records its phases, decisions, and known limitations, and supersedes the backend phases of PROJECT_DEV_PLAN.md. Do not modify the Rails backend during frontend work unless a change is approved in FRONTEND_PLAN.md.
 
 ## Commands
 

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { employeeKeys } from "@/components/employees/useEmployees";
 import { isApiError } from "@/services/api";
+import { invalidateAnalyticsAndReports } from "@/services/queryClient";
 import type {
   SalaryChangeInput,
   SalaryCorrectionInput,
@@ -13,9 +14,6 @@ export const salaryKeys = {
   history: (employeeId: number) =>
     ["employees", employeeId, "salary-records"] as const,
 };
-
-/** Analytics and report queries (F7) read salaries; invalidating these prefixes is harmless before then. */
-const SALARY_DEPENDENT_KEYS = [["analytics"], ["reports"]] as const;
 
 export function useSalaryRecords(employeeId: number) {
   return useQuery({
@@ -31,8 +29,7 @@ export function useSalaryRecords(employeeId: number) {
 function useRefreshAfterSalaryWrite(employeeId: number) {
   const queryClient = useQueryClient();
   return async () => {
-    for (const queryKey of SALARY_DEPENDENT_KEYS)
-      void queryClient.invalidateQueries({ queryKey });
+    invalidateAnalyticsAndReports(queryClient);
     await Promise.all([
       queryClient.invalidateQueries({
         queryKey: salaryKeys.history(employeeId),

@@ -1,4 +1,5 @@
 import { screen, waitFor } from "@testing-library/react";
+import type { QueryClient } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import App from "@/App";
@@ -27,10 +28,25 @@ async function renderEdit(
     updated: employeeDetail({ department: { id: 2, name: "Finance" } }),
     ...writes,
   });
-  renderWithProviders(<App />, { route: "/employees/101/edit" });
+  const { queryClient } = renderWithProviders(<App />, {
+    route: "/employees/101/edit",
+  });
   await screen.findByRole("heading", { name: "Edit Rao, Asha" });
   await screen.findByRole("option", { name: "Finance" });
-  return { api, user: userEvent.setup() };
+  return { api, queryClient, user: userEvent.setup() };
+}
+
+/** Analytics and report data already on screen elsewhere (e.g. the dashboard) before a write (F9.1 R1). */
+function seedAnalyticsAndReports(queryClient: QueryClient) {
+  queryClient.setQueryData(["analytics", "summary", {}], { cached: true });
+  queryClient.setQueryData(["reports", "salaries", {}], { cached: true });
+}
+
+function analyticsAndReportsInvalidated(queryClient: QueryClient) {
+  return [
+    queryClient.getQueryState(["analytics", "summary", {}])?.isInvalidated,
+    queryClient.getQueryState(["reports", "salaries", {}])?.isInvalidated,
+  ];
 }
 
 describe("EmployeeEditPage", () => {
@@ -59,6 +75,17 @@ describe("EmployeeEditPage", () => {
     expect(api.bodies).toEqual([
       { method: "PATCH", body: { employee: { department_id: 2 } } },
     ]);
+  });
+
+  it("marks analytics and reports stale after a change, since they use current department and status", async () => {
+    const { queryClient, user } = await renderEdit();
+    seedAnalyticsAndReports(queryClient);
+
+    await user.selectOptions(screen.getByLabelText("Status"), "Terminated");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await screen.findByText("Changes saved.");
+    expect(analyticsAndReportsInvalidated(queryClient)).toEqual([true, true]);
   });
 
   it("can clear the email and terminate the employee (no delete)", async () => {

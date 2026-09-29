@@ -2,7 +2,7 @@
 
 **Purpose:** Phased implementation plan for the React frontend that consumes the completed Rails API (`BACKEND_PLAN.md`, Phases 1–7).
 
-**Stack (ADR 006):** Node 22 LTS, Vite 7, React 19, TypeScript (strict), React Router 7, TanStack Query 5, Bootstrap 5.3 with react-bootstrap (no chart library, V8); Vitest, React Testing Library, and MSW; Playwright.
+**Stack (ADR 006; installed versions):** Node 22.23, Vite 8.3, React 19.3, TypeScript 6.0 (strict), React Router 8.4, TanStack Query 5.104, Bootstrap 5.3.8 with react-bootstrap 2.10 (no chart library, V8); Vitest 5.0, React Testing Library 16.3, and MSW 3.0; Playwright 1.63 with @axe-core/playwright 4.13.
 
 **Scope:** The UI for FR-01 to FR-07 (`docs/requirements.md`): sign-in, employee management, salary records and history, search/filters/pagination, compensation analytics, and reports with CSV export, for one HR Manager. It excludes the features in requirements §6 and **any Rails backend change** unless it is approved and recorded here (see the gaps).
 
@@ -1159,15 +1159,136 @@ Inputs: requirements FR-01–FR-07 and §4 (non-functional); API spec §13 (clie
 ## Phase F9 — Final review and handoff
 **Goal:** A reviewed, documented frontend that runs with the backend.
 
+### F9 review findings (2026-09-30)
+
+Inputs: the root `README.md` and `frontend/README.md`; `docs/architecture.md`, `docs/requirements.md`, `PROJECT_DEV_PLAN.md`, `CLAUDE.md`, and ADR 006; gaps G1–G8; `frontend/.gitignore` and `.env.example`; a code-health scan of `frontend/src` and `e2e/`; and `package.json` against ADR 006. No code written. Observed:
+- **The README covers only the backend.** Its status line says "The React frontend is planned separately", and it has no Node prerequisite, no frontend setup, no instructions for running the two together or for signing in to the UI, and no frontend test or E2E commands. `frontend/README.md` only points to the root README.
+- **Other docs still describe the frontend as future work:**
+  - `docs/architecture.md`: "The React frontend is a future client" (scope line), "future React app" (diagram), "the future frontend is served same-site" (cross-origin);
+  - `docs/requirements.md`: "The future frontend will be served same-site"; the usability NFR row says "deferred to the frontend plan"; the traceability table lists backend tests only;
+  - `PROJECT_DEV_PLAN.md`: subphases 2.3–2.4 "remain here until a separate frontend plan replaces them";
+  - this plan's own header still says "Vite 7 … React Router 7" (installed: Vite 8.3, React Router 8.4; ADR 006 is correct).
+- **Code health is good:** no TODO/FIXME, no `eslint-disable`, no `any` or `@ts-ignore`, and no `fetch` outside `services/api.ts`. The largest file is `services/api.ts` (273 lines). One stale comment: `.env.example` says "src/api" (now `src/services/api.ts`). Installed versions match ADR 006.
+- **Git hygiene:** `dist/`, `test-results/`, `playwright-report/`, `coverage/`, and `playwright/.auth/` are ignored. `AGENTS.md` and `.agents/` are untracked files that are not part of this work; F9 leaves them alone.
+- **Open items to document, not fix:**
+  - G7: the built app is not served anywhere yet (production needs same-site serving with an `index.html` fallback, which is a deployment/backend change);
+  - there is no CI for either app (backend R5);
+  - E2E needs the running Rails server and development database, signs in 4 times per run, and adds two `EMP-E2E-*` employees per run (10,035 employees now; `bin/rails demo:reset` restores 10,000);
+  - the native date input shows the browser's locale format while the app shows ISO dates;
+  - accepted gaps G2, G4, G5, and G8.
+- **The backend stays unchanged** (cross-phase rule). Its own limitations (R1–R6) are already in the README.
+
+#### A. Missing decisions
+
+**Owner decisions (2026-09-30):** Y1–Y7 approved (the owner's go-ahead for F9.1).
+
+| ID | Decision | Recommendation | Needed by |
+|---|---|---|---|
+| Y1 | **F9.1 review method.** | Review `frontend/` (`src/`, `e2e/`, config) against `CLAUDE.md` (scope, business rules), the frontend, security, and testing rules, ADR 006, and API spec v2.1, including a scope check that no excluded feature crept in. Output: a findings table in F9.1 with severity (High / Medium / Low / Info), `file:line`, and a recommendation. **Low-risk fixes with no behaviour change** (comments, stale paths, doc wording) are made in F9.1 and verified. **Anything that changes behaviour is reported first** and waits for the owner | F9.1 |
+| Y2 | **Root README (F9.2).** | Update in place, keeping the backend content: <br>- status (backend and frontend complete, with test counts); layout rows for `frontend/` and `FRONTEND_PLAN.md`; <br>- **Node 22.22+ via nvm** in prerequisites; frontend setup (`nvm use`, `npm ci`, optionally `npx playwright install chromium`); <br>- **running both** (Rails on :3000, `npm run dev` on :5173 with the `/api` proxy; sign in with the `hr:create_user` login); <br>- frontend testing (`npm test`, `lint`, `typecheck`, `format`, `build`) and **E2E** (Rails running, `E2E_HR_EMAIL`/`E2E_HR_PASSWORD`, about 65 s between runs, `EMP-E2E-*` records and `demo:reset`); <br>- troubleshooting (nvm default Node 18, `429` on back-to-back E2E runs, `invalid_csrf_token` through a misconfigured proxy); <br>- a frontend section in Known limitations (Y4); ADR 006 and `FRONTEND_PLAN.md` in Documentation. <br>`frontend/README.md` stays a short pointer, with the four everyday commands added | F9.2 |
+| Y3 | **Other docs (F9.2).** | Present tense for the existing frontend in `docs/architecture.md` (scope line, diagram label, cross-origin note) with a pointer to ADR 006; in `docs/requirements.md`, the usability NFR row points to F8.2 and the traceability section points to the F8.1 matrix (not duplicated); `PROJECT_DEV_PLAN.md` notes that 2.3–2.4 are superseded by this plan; `CLAUDE.md` "Current Plan" says the frontend is complete; this plan's header stack line is corrected; `.env.example` path fixed (or in F9.1 under Y1) | F9.2 |
+| Y4 | **Frontend limitations to document.** | G7 production serving not set up; no CI; E2E is Chromium only, needs the running backend and development data, and leaves `EMP-E2E-*` records; the date input shows the browser's locale format; no dark mode or translations; accepted gaps G2 (no list of employees without a salary), G4 (one status filter at a time), G5 (no trends), G8 (errors for create may come in two rounds); Node ≥ 22.22 required | F9.2 |
+| Y5 | **Final regression (F9.2).** | **Backend:** `bin/rails test` (two seeds), `bin/rubocop`, `bin/brakeman --no-pager`, and `bin/rails demo:verify` (read-only). **Frontend:** `prettier --check`, `typecheck`, `lint`, `test`, `build` (within the 150 kB gzip budget), `npm audit`, and the full E2E suite against the real API (R13 temporary user). Exact results are recorded | F9.2 |
+| Y6 | **"Runs from the README" check (the phase gate).** | **Frontend from a clean checkout:** clone the repository into the scratchpad, then follow the README (`nvm use`, `npm ci`, `npm test`, `npm run build`); the working tree is not touched. **Both apps together:** follow the README's run steps (Rails server and `npm run dev`), sign in through the UI with the temporary user, and screenshot the dashboard. The backend's database setup is not repeated from scratch (the owner's MySQL setup is already documented and in use) | F9.2 |
+| Y7 | **Handoff summary.** | A short "Handoff" section at the end of this plan: how to run the project, where the decisions and test matrix live, and the owner's open items (G7 serving, CI, backend R1 runtime end-of-life, the untracked `AGENTS.md`/`.agents/`) | F9.2 |
+
+#### B. Assumptions
+- No feature work in F9, and no backend change. Fixes are limited to Y1's low-risk category unless the owner approves more.
+- The development database keeps its `EMP-E2E-*` records; `demo:reset` is the owner's choice (it also removes any other hand-made records).
+- Network access is available for `npm ci` in the clean-checkout check.
+
+#### C. Dependencies
+
+| Dependency | Blocks | Owner |
+|---|---|---|
+| ~~Approval of Y1–Y7~~ Approved 2026-09-30 | F9.1 | Project owner |
+| ~~F8 committed~~ Committed (`f8e90f0`) | F9.1 (clean starting point) | Project owner |
+
+#### D. Risks
+
+| Risk | Likelihood / impact | Mitigation |
+|---|---|---|
+| README steps drift from reality (a missing step works only on this machine) | Medium / Medium | Y6: clean-checkout run of the frontend steps and a UI sign-in following the run steps |
+| Docs contradict each other after the update (README, architecture, CLAUDE.md, plans) | Medium / Low | Y3 lists every place found; a final `grep` for "future frontend", "planned separately", and "future React" |
+| The final E2E run adds more `EMP-E2E-*` records | Certain / Low | Documented (Y4); `demo:reset` restores the baseline |
+| A review finding needs a behaviour change late in the project | Low / Medium | Y1: reported first, fixed only with the owner's approval, each with a test |
+
 ### F9.1 Code and scope review
-**Prompt:** `Review frontend/ against CLAUDE.md, the frontend rules, ADR 006, and API spec v2.1. Report findings by severity with file references before nontrivial changes.`
-**Status:** Not Started
+**Prompt:** `Per Y1: review frontend/ against CLAUDE.md, the frontend, security, and testing rules, ADR 006, and API spec v2.1 (including an excluded-features scope check). Record findings by severity with file:line in this plan; make only low-risk, behaviour-neutral fixes and verify them; report the rest before any nontrivial change.`
+**Tasks:**
+1. ~~Owner: approve Y1–Y7.~~ Approved 2026-09-30 (the owner's go-ahead for F9.1).
+2. ~~Review and findings table (Y1); low-risk fixes, verified with lint, typecheck, and tests.~~ Done 2026-09-30; see the findings below.
+3. ~~Report behaviour-changing findings (if any) to the owner.~~ Done 2026-09-30. **The owner approved R1–R4**, and all four were fixed with tests (see the status).
+
+**Findings (2026-09-30).** Reviewed: `frontend/src` (every page, component, hook, and service), `e2e/`, and the config files, against `CLAUDE.md` (scope and business rules), `.claude/rules/frontend/*`, `security.md`, `testing.md`, ADR 006, and API spec v2.1 (§1–§13).
+
+| # | Severity | Finding | Where | Recommendation | Status |
+|---|---|---|---|---|---|
+| R1 | Medium | **Analytics, dashboard, and report can show stale figures after an employee is created or edited.** Create and edit refresh only the employee list. Analytics and reports use each employee's current country, department, and status (§8.1), and a new employee may bring an initial salary. So changing a department, terminating someone, or adding a salaried employee leaves those pages up to 30 s out of date (the query `staleTime`). Salary changes already refresh them (U4) | `components/employees/EmployeeCreatePage.tsx:26-28`, `EmployeeEditPage.tsx:35-37` | Also invalidate the `["analytics"]` and `["reports"]` prefixes after a successful create or edit (reuse the U4 list of salary-dependent keys), with a test for each | **Fixed** (owner approved): `invalidateAnalyticsAndReports` in `services/queryClient.ts`, used by salary writes (U4), create, and edit; tests in `EmployeeCreatePage`/`EmployeeEditPage` |
+| R2 | Low | **The employee's name is in the browser tab title** ("Rao, Asha · Salary Management"), so it is kept in browser history and shown in tab lists. The security rules keep personal data out of browser storage and URLs, and history is a kind of browser storage | `components/employees/EmployeeDetailPage.tsx` (`useDocumentTitle(name)`) | Use the employee number instead ("EMP-00238 · Salary Management") or a generic "Employee"; the page heading still shows the name | **Fixed** (owner approved): the title is the employee number; `EmployeeDetailPage` test asserts no name in the title |
+| R3 | Low | **The employee form can hide a 422 message.** When the API returns field details, the alert always says "Please correct the highlighted fields.", but a detail for a field the form doesn't show would appear nowhere. The API maps the known keys, but `Employee` validates its salary association, so another key is possible (a latent risk, not seen in tests). The salary dialogs already list such messages (`SalarySaveError`) | `components/employees/EmployeeForm.tsx:88-97` | Show any unshown field messages in the alert, as `SalarySaveError` does, with a test | **Fixed** (owner approved): `EmployeeForm` lists messages for fields it does not show; `EmployeeCreatePage` test |
+| R4 | Info | **An 18-digit employee ID in the URL loses precision.** `parseEmployeeId` accepts up to 18 digits, but `Number()` is exact only up to 16, so a crafted URL requests a different (non-existent) ID and shows "Employee not found". Real IDs are 5 digits | `components/employees/useEmployees.ts:33` | Optional: accept at most 15 digits | **Fixed** (owner approved): `parseEmployeeId` accepts at most 15 digits; `EmployeeDetailPage` test (a 16-digit ID is never requested) |
+| R5 | Info | **Rule wording:** `components.md` says "components in `common/` never fetch data", but `ReferenceSelects` loads the reference lists through `useReferenceData` (approved in S7) | `.claude/rules/frontend/components.md`; `components/common/ReferenceSelects.tsx` | Name the exception in the rule ("except reference-data selects, S7") in F9.2 (Y3 docs) | **Fixed in F9.2** |
+| R6 | Low | **Stale path in a comment:** `.env.example` said "src/api" | `frontend/.env.example:3` | Now `src/services/api.ts` | **Fixed** (behaviour-neutral); format, typecheck, lint, and 203 tests pass |
+| R7 | Info | This plan's header lists old versions (Vite 7, React Router 7), and several docs still call the frontend future work | `FRONTEND_PLAN.md:5`; the docs in Y3 | Update in F9.2 (Y3) | **Fixed in F9.2** |
+
+**Checked and found in line with the rules** (no finding):
+- **Scope:** no payroll, tax, conversion, integrations, roles, or AI features; no backend change.
+- **API contract (§13):** same-site cookie session; CSRF token handling and one refresh-and-retry; 401 → signed out, with the cache cleared; 422 details on fields; 429, 400, 404, 5xx, and network errors; `export_too_large` through `apiDownload`; no session polling.
+- **Security:** session and token in memory only; `q` never in URLs; no console output beyond the error name; no HTML rendering (now enforced by lint); open-redirect guard on the return path; generic error messages. The E2E privacy guard and ESLint rules from F8.1 enforce these.
+- **Data display:** money shown as the API's strings with the currency code and "monthly"; `Number()` only for IDs, counts, and page sizes; no cross-currency totals or comparisons; dates as given, with the only `Date` use validating a date typed into the URL; `status`/`editable`/`employment_status` used as given.
+- **Components:** loading, empty, and error states everywhere data loads; shared components with at least two consumers; forms with labels, basic checks only, and 422 messages on fields.
+- **Code health:** no TODOs, lint suppressions, `any`, or `@ts-ignore`; no `fetch` outside `services/api.ts`; versions match ADR 006.
+- **Accessibility and responsiveness:** covered by F8.2 (axe clean, keyboard journeys, 390/768/1280 px).
+
+**Acceptance:** Every rule file and the API contract reviewed; findings recorded by severity; no unapproved behaviour change.
+**Status:** Done (2026-09-30). R6 fixed as behaviour-neutral; **R1–R4 fixed after the owner's approval**, each with a test; R5 and R7 are planned for F9.2.
+- **Checks under Node 22.23.3:** `prettier --check`, `npm run typecheck`, `lint` (zero warnings), `test` (**32 files, 207 tests**, 4 new), and `build` all exit 0; JS 124.7 kB gzip (budget 150).
+- **Each new test fails without its fix:** undoing R1 on edit, R1 on create, R2, R3, or R4 fails exactly the matching test (1 failure each); the fixes were restored and the employee tests re-run green (42/42).
+- **E2E against the real API** (Claude's Rails on :3134, Vite on :5200, temporary user): **29 passed**, with the privacy guard and axe scans. Cleanup verified (`User.count` = 1, auth file removed, ports free; 10,037 employees).
 
 ### F9.2 Documentation and final regression
-**Prompt:** `Update README (Node setup, running backend and frontend together, tests, running E2E against the real API), this plan, and any affected docs. Run the full frontend and backend test suites, lint, typecheck, build, and E2E. Report exact results.`
-**Status:** Not Started
+**Prompt:** `Per Y2–Y7: update the root README (frontend setup, running both apps, frontend tests and E2E, troubleshooting, limitations, docs), frontend/README.md, docs/architecture.md, docs/requirements.md, PROJECT_DEV_PLAN.md, CLAUDE.md, and this plan (header, handoff). Run the backend and frontend suites, lint, typecheck, build, audit, and E2E; check the README from a clean frontend checkout and a UI sign-in. Report exact results.`
+**Tasks:**
+1. ~~README and frontend README (Y2); other docs (Y3); limitations (Y4).~~ Done 2026-09-30:
+   - **`README.md`:** status (backend 246 tests; frontend 207 unit/component and 29 E2E); layout rows for `frontend/` and `FRONTEND_PLAN.md`; Node 22.22.2+ via nvm in prerequisites; setup step 6 (install the frontend); **Running** with both apps and the UI sign-in; **Testing** split into backend and frontend, with the E2E steps, rate limit, `EMP-E2E-*` records, privacy guard, and specs; four troubleshooting entries; a **Frontend** block in Known limitations (G7 serving, no CI, E2E scope, date-picker format, English only and no dark mode, G2/G4/G5/G8); ADR 006 and both plans under Documentation. Every command named was checked against `package.json`.
+   - **`frontend/README.md`:** a short description, pointers, and the everyday commands.
+   - **Other docs:**
+     - `docs/architecture.md`: scope line, diagram label, cross-origin note (with G7), and the out-of-scope line;
+     - `docs/requirements.md`: same-site assumption, the usability NFR row (pointing to F8.2), and a frontend traceability pointer to the F8.1 matrix;
+     - `PROJECT_DEV_PLAN.md`: 2.3–2.4 marked superseded by this plan;
+     - `CLAUDE.md` "Current Plan": frontend complete;
+     - `.claude/rules/frontend/components.md`: the `ReferenceSelects` exception named (R5);
+     - this plan's header: installed versions (R7).
+   - A final search for "future frontend", "future React", "planned separately", and "future client" finds only ADR 004's Context section, which is left as written because ADRs record the situation when they were decided.
+2. ~~Final regression (Y5).~~ Done 2026-09-30; see the status.
+3. ~~README check (Y6); handoff section (Y7); record.~~ Done 2026-09-30; see the status and "Handoff" below.
 
-**Phase gate:** The frontend and backend run together from the README; all suites pass; limitations are documented.
+**Acceptance:** The docs describe the finished system consistently; all suites pass; the README steps work from a clean checkout.
+**Status:** Done (2026-09-30).
+- **Backend** (`backend/`, Ruby 3.2.0): `bin/rails test` **246 runs, 1,054 assertions, 0 failures, 0 errors** with seed 1234 and again with seed 5678; `bin/rubocop` 130 files, **no offenses**; `bin/brakeman --no-pager` **0 security warnings**; `bin/rails demo:verify` (read-only) **0** overlaps, open-record duplicates, scale violations, pre-hire starts, or invalid periods (10,037 employees, 16,898 salary records). No backend file changed.
+- **Frontend** (Node 22.23.3): `prettier --check`, `typecheck`, `lint` (zero warnings), `test` (**32 files, 207 tests**), and `build` all exit 0; JS 402.6 kB (**124.7 kB gzip**, budget 150), CSS 231.6 kB (31.3 kB gzip); `npm audit` **0 vulnerabilities**.
+- **E2E:** not re-run in F9.2, at the owner's request and because F9.2 changed only documentation. The last full run came after the last code change (F9.1 fixes): **29/29** on the real API with the privacy guard and axe scans.
+- **README check (Y6):**
+  - **Clean frontend checkout:** the repository was cloned into the scratchpad with the working-tree changes applied, then set up by following the README. `nvm use` picked Node 22.23.3 from `.nvmrc`; `npm ci` succeeded with 0 vulnerabilities; `npm test` passed 207/207; `npm run build` produced the same bundle hash as the working tree; `npm run lint` passed. The clone was deleted afterwards.
+  - **Both apps as in "Running":** the owner's own Rails server (:3000) and Vite dev server (:5173, this repo's `frontend/`) were already running on the README's default ports, so they were used as-is and left running; both health checks returned `ok`. Signing in through the UI with the R13 temporary user landed on the dashboard ("Dashboard · Salary Management", live figures; screenshot reviewed), and signing out showed "You have signed out.". The temporary user was deleted afterwards (`User.count` = 1).
+
+**Phase gate:** The frontend and backend run together from the README; all suites pass; limitations are documented. **Passed 2026-09-30:** the README steps were checked from a clean frontend checkout and with a UI sign-in against both running apps; the backend suite passes with two seeds (plus rubocop, brakeman, and `demo:verify`); the frontend checks pass (207 tests, 29 E2E after the last code change); limitations are in the README and this plan.
+
+### Handoff (2026-09-30)
+- **Run it:** follow the root README: Setup steps 1–6, then **Running** (Rails server, `npm run dev`, open `http://localhost:5173`, sign in with the `hr:create_user` login).
+- **Where things are:**
+  - decisions: FD/Q/R/S/T/U/V/W/X/Y tables in this plan, and ADR 006;
+  - requirement → test matrix: F8.1;
+  - known gaps: G1–G8 (F1.1) and the README's Known limitations;
+  - the backend's own plan, risks, and matrix: `BACKEND_PLAN.md`.
+- **Open items for the owner:**
+  - **Production serving (G7):** serve `frontend/dist/` from the API's site with an `index.html` fallback. This is a deployment and backend change, to be decided with Docker/deployment.
+  - **CI:** none for either app (backend R5; the generated workflow is not at the repository root).
+  - **Runtime support (backend R1):** Ruby 3.2.0 is past end of life, and Rails 8.0 support ends on 2026-11-07. Upgrade before using real data.
+  - **Development data:** cleaned on 2026-09-30 at the owner's request. Only the 36 `EMP-E2E-*` employees from E2E runs (and their 70 salary records) were deleted, in one transaction; `demo:reset` was not used because it would also delete the hand-made employee `SUMIT`. Now 10,001 employees (10,000 demo plus `SUMIT`); `demo:verify` is clean. Each later E2E run adds two `EMP-E2E-*` employees again.
+  - **Untracked files:** `AGENTS.md` and `.agents/` are not part of this work and were left untouched.
+  - **Commit:** F9.1's fixes and F9.2's documentation are not yet committed.
 
 ---
 
@@ -1227,6 +1348,11 @@ Inputs: requirements FR-01–FR-07 and §4 (non-functional); API spec §13 (clie
 | 2026-09-30 | F8 (X decisions); F7.3 (W confirmed) | Owner approved X1–X10 as recommended, including the `@axe-core/playwright` dev dependency; confirmed W2 (employee counts per currency in the dashboard chart) and W4 (active and on-leave employees in the counts). The dashboard is scanned as it stands in F8.2 | Plan update only | — |
 | 2026-09-30 | F8.1 | Requirement → test matrix in this plan (FR-01–FR-07, §13 behaviours, data-display, component, and security rules): no uncovered row; one thin spot filled with two tests (a 500 on create and on Record salary change shows only the generic message and keeps the input). E2E privacy guard (`e2e/support.ts` auto-fixture: no console errors or warnings, no `q` in page URLs, empty storage) on every spec; ESLint rules against `dangerouslySetInnerHTML` and against E2E specs bypassing the guard | prettier, typecheck, lint, test (32 files, 203 tests), and build exit 0; unit suite green in three shuffled orders; E2E 15/15 twice on the real API (temporary user; cleanup verified, `User.count` = 1); guard mutation (storage, console, `?q=`) caught; both ESLint rules proven to fire | Next: F8.2 on the owner's go-ahead |
 | 2026-09-30 | F8.2 | `@axe-core/playwright` 4.13 (ADR 006 amended); `e2e/accessibility.spec.ts` (WCAG 2.1 A/AA on 7 pages and both dialogs), `keyboard.spec.ts` (keyboard-only journeys, desktop and phone), `responsive.spec.ts` (0 px overflow at 390/768/1280; dates on one line). Fixed: 1 px vertical overflow made every table wrapper scrollable (axe `scrollable-region-focusable` on bar tables) → `overflow-y: hidden`; dates wrapping at 768 px → `text-nowrap`; scan helper waits for animations (the dialog contrast finding was a mid-fade scan). F8 gate passed | prettier, typecheck, lint, test (32 files, 203 tests), and build exit 0; E2E 29/29 twice on the real API (temporary user; cleanup verified, `User.count` = 1); both fixes shown failing before and passing after; bundle 124.6 kB gzip (budget 150); `npm audit` 0 | Owner: commit F8 (F8.1 + F8.2). Next: F9 review |
+| 2026-09-30 | F9 (review) | Reviewed F9 against the README files, `docs/architecture.md`, `docs/requirements.md`, `PROJECT_DEV_PLAN.md`, `CLAUDE.md`, ADR 006, gaps G1–G8, ignore rules, and a code-health scan. Recorded Y1–Y7, assumptions, dependencies, and risks; rewrote F9.1 and F9.2 with tasks. Key points: the README covers only the backend (it still says the frontend is planned); architecture, requirements, and the old plan still call the frontend future work, and this plan's header lists old versions; the code is clean (no TODOs, suppressions, `any`, or stray `fetch`; one stale path in `.env.example`); F9.1 fixes only behaviour-neutral issues and reports the rest; F9.2 checks the README from a clean frontend checkout plus a UI sign-in, runs both suites, and adds a handoff section | Read-only: docs and README files, `git check-ignore`, `grep` scans of `frontend/`. No code written | Owner: approve Y1–Y7 |
+| 2026-09-30 | F9.1 | Code and scope review of `frontend/` against CLAUDE.md, the frontend, security, and testing rules, ADR 006, and API spec v2.1. Findings R1–R7: **R1 (Medium)** employee create/edit don't refresh analytics and report caches (up to 30 s stale); **R2 (Low)** the employee name in the tab title reaches browser history; **R3 (Low)** the employee form can hide a 422 message for a field it doesn't show; R4 (Info) an 18-digit URL ID loses precision; R5/R7 (Info) rule wording and stale docs for F9.2; **R6 fixed** (`.env.example` stale path). Scope, API contract, security, data display, components, and code health otherwise in line | After the R6 fix: prettier, typecheck, lint, and test (32 files, 203 tests) exit 0. No behaviour change made | Owner: decide R1–R3 (and optional R4); then F9.2 |
+| 2026-09-30 | F9.1 (R fixes) | Owner approved R1–R4. R1: `invalidateAnalyticsAndReports` (`services/queryClient.ts`) now used by salary writes, employee create, and employee edit. R2: the employee page's tab title is the employee number, not the name. R3: `EmployeeForm` lists 422 messages for fields it does not show. R4: `parseEmployeeId` accepts at most 15 digits | prettier, typecheck, lint, test (32 files, 207 tests), and build exit 0; each new test fails with its fix undone; E2E 29/29 on the real API (temporary user; cleanup verified, `User.count` = 1) | Next: F9.2 on the owner's go-ahead |
+| 2026-09-30 | F9.2 | README (status, layout, Node prerequisite, frontend setup, running both apps, backend and frontend testing with E2E, troubleshooting, frontend limitations, docs) and `frontend/README.md`; architecture, requirements, `PROJECT_DEV_PLAN.md`, `CLAUDE.md`, the components rule (R5), and this plan's header (R7) brought up to date; Handoff section. F9 gate passed | Backend: 246 runs, 0 failures with two seeds; rubocop no offenses; brakeman 0 warnings; `demo:verify` clean. Frontend: prettier, typecheck, lint, test (207), and build exit 0; 124.7 kB gzip; `npm audit` 0. README check: clean-clone `npm ci`/test/build/lint pass; UI sign-in and sign-out on the running :3000/:5173 apps (temporary user deleted, `User.count` = 1). E2E not re-run (docs only; last run 29/29 after the last code change) | Owner: commit F9 (F9.1 + F9.2); open items in Handoff |
+| 2026-09-30 | Dev data cleanup (owner request) | Owner asked for `demo:reset`; it would also delete the hand-made employee `SUMIT`, so the owner chose a targeted cleanup: the 36 `EMP-E2E-*` employees and their 70 salary records deleted in one transaction (development only; `salary_records` is the only table referencing employees). The Handoff count (37) is corrected: the 37th non-demo employee was `SUMIT` | Before: 10,037 employees, 16,898 salary records. After: 10,001 employees (10,000 demo + `SUMIT`), 16,828 salary records, 0 `EMP-E2E-*` left, `User.count` = 1; `demo:verify` 0 violations | — |
 
 ## Current progress
 - **F1** — Frontend design and decisions — **Done (gate passed 2026-09-29)**
@@ -1237,4 +1363,5 @@ Inputs: requirements FR-01–FR-07 and §4 (non-functional); API spec §13 (clie
 - **F6** — Salary history — **Done (gate passed 2026-09-29)**. F6.1, F6.2 Done.
 - **F7** — Analytics and reports — **Done (gate passed 2026-09-30)**. F7.1, F7.2 Done; F7.3 Dashboard (owner request) Done.
 - **F8** — Quality review — **Done (gate passed 2026-09-30)**. F8.1, F8.2 Done.
-- **Next:** F9 review (final review and handoff), after the owner commits F8
+- **F9** — Final review and handoff — **Done (gate passed 2026-09-30)**. F9.1, F9.2 Done.
+- **All frontend phases F1–F9 are done.** Open items for the owner are listed under F9.2 "Handoff".

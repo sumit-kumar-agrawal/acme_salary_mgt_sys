@@ -12,6 +12,7 @@ import {
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import type { EmployeeInput } from "@/services/employee.types";
 import { employeeService } from "@/services/employeeService";
+import { invalidateAnalyticsAndReports } from "@/services/queryClient";
 
 // New employee, with an optional initial salary in the same request (FRONTEND_PLAN.md T7, T8, T10; D14).
 export default function EmployeeCreatePage() {
@@ -26,6 +27,8 @@ export default function EmployeeCreatePage() {
     onSuccess: async (employee) => {
       queryClient.setQueryData(employeeKeys.detail(employee.id), employee);
       await queryClient.invalidateQueries({ queryKey: employeeKeys.lists() });
+      // A new employee may bring an initial salary (F9.1 R1).
+      invalidateAnalyticsAndReports(queryClient);
       void navigate(`/employees/${employee.id}`, {
         state: { notice: "Employee created.", from: backTo },
       });

@@ -83,7 +83,7 @@ The application provides authentication and server-side authorization appropriat
 - Salary history and effective-date behavior follow the approved decisions in §10.
 - One organization and one HR Manager. 10,000 is the employee record count, not the concurrent-user count.
 - Country and department history is not tracked; analytics use each employee's current country and department.
-- The future frontend will be served same-site (or through a development proxy), which the session-based authentication relies on.
+- The frontend is served same-site (through the Vite proxy in development), which the session-based authentication relies on (ADR 006).
 - Use synthetic employee data for development and demonstrations.
 
 ## 8. Acceptance summary
@@ -132,9 +132,11 @@ The phase column refers to `BACKEND_PLAN.md`. Endpoint paths are relative to `/a
 | NFR Security and privacy | Strong parameters, filtered logs, safe error messages | — | `int/log_redaction_test.rb`, log tests in `int/salary_records_test.rb` and `int/sessions_test.rb`, `config/security_config_test.rb`, no-echo error tests; security checklist in `BACKEND_PLAN.md` 6.3 | 4.1, 4.4, 6.1, 6.3 |
 | NFR Reliability | Transactions for salary changes; preserved history | — | Rollback and lock tests (`services/**`), DB constraint tests (`models/**`), duplicate-key race `422` (`int/employees_test.rb`) | 3.2, 4.4, 6.1 |
 | NFR Maintainability | Modular code, automated tests, documented API | — | The Minitest suite (246 runs), RuboCop, Brakeman; README and API spec §13 | 6.1, 7.2 |
-| NFR Usability | Responsive, accessible UI | — | Out of backend scope; deferred to the frontend plan | — |
+| NFR Usability | Responsive, accessible UI | — | Out of backend scope; covered by the frontend (`FRONTEND_PLAN.md` F8.2: axe WCAG 2.1 AA, keyboard-only journeys, 390/768/1280 px checks) | — |
 
 Excluded from backend scope: frontend implementation and the features listed in §6.
+
+**Frontend traceability:** the frontend's requirement → test matrix (FR-01–FR-07, the API's client behaviours, and the frontend rules, with unit/component and end-to-end tests) is in `FRONTEND_PLAN.md` F8.1.
 
 ## 12. Changelog
 

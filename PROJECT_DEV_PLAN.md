@@ -19,7 +19,8 @@ changed.
 > backend requirements, design, Rails, database, API, and backend-test work.
 > Phase 1, subphases 2.1–2.2, and Phase 3 below are superseded and kept for
 > reference only. Subphases 2.3–2.4 (React foundation and local integration)
-> remain here until a separate frontend plan replaces them.
+> are superseded by `FRONTEND_PLAN.md` (2026-09-29), which governs all
+> frontend work; this file is kept for history only.
 
 ## How to use this plan
 

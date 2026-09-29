@@ -1,4 +1,5 @@
 import { screen, waitFor } from "@testing-library/react";
+import type { QueryClient } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse } from "msw";
 import { afterEach, describe, expect, it } from "vitest";
@@ -27,11 +28,26 @@ async function renderCreate(
   mockSessionBackend({ signedIn: true });
   mockEmployeeDetail(employeeDetail({ id: 777 }));
   const api = mockEmployeeWrites(writes);
-  renderWithProviders(<App />, { route: "/employees/new" });
+  const { queryClient } = renderWithProviders(<App />, {
+    route: "/employees/new",
+  });
   await screen.findByRole("heading", { name: "New employee" });
   const user = userEvent.setup();
   await screen.findByRole("option", { name: "India" });
-  return { api, user };
+  return { api, queryClient, user };
+}
+
+/** Analytics and report data already on screen elsewhere (e.g. the dashboard) before a write (F9.1 R1). */
+function seedAnalyticsAndReports(queryClient: QueryClient) {
+  queryClient.setQueryData(["analytics", "summary", {}], { cached: true });
+  queryClient.setQueryData(["reports", "salaries", {}], { cached: true });
+}
+
+function analyticsAndReportsInvalidated(queryClient: QueryClient) {
+  return [
+    queryClient.getQueryState(["analytics", "summary", {}])?.isInvalidated,
+    queryClient.getQueryState(["reports", "salaries", {}])?.isInvalidated,
+  ];
 }
 
 async function fillRequired(user: ReturnType<typeof userEvent.setup>) {
@@ -173,6 +189,38 @@ describe("EmployeeCreatePage", () => {
     expect(screen.getByRole("main")).not.toHaveTextContent(/PG::|\.rb/);
     expect(currentLocation()).toBe("/employees/new");
     expect(screen.getByLabelText("Employee number")).not.toHaveValue("");
+  });
+
+  it("marks analytics and reports stale after creating an employee", async () => {
+    const { queryClient, user } = await renderCreate();
+    seedAnalyticsAndReports(queryClient);
+    await fillRequired(user);
+
+    await user.click(screen.getByRole("button", { name: "Create employee" }));
+
+    await screen.findByText("Employee created.");
+    expect(analyticsAndReportsInvalidated(queryClient)).toEqual([true, true]);
+  });
+
+  it("lists API messages for fields the form does not show, so none is lost (F9.1 R3)", async () => {
+    const { user } = await renderCreate({
+      createResponse: () =>
+        validationFailed({
+          employee_number: ["has already been taken"],
+          salary_records: ["is invalid"],
+        }),
+    });
+    await fillRequired(user);
+
+    await user.click(screen.getByRole("button", { name: "Create employee" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "salary_records is invalid",
+    );
+    // A field the form does show still gets its message underneath.
+    expect(
+      screen.getByLabelText("Employee number"),
+    ).toHaveAccessibleDescription(/has already been taken/);
   });
 
   it("Cancel returns to the employee list", async () => {

@@ -103,7 +103,8 @@ export default function EmployeeDetailPage() {
   const name = employee.data
     ? `${employee.data.last_name}, ${employee.data.first_name}`
     : null;
-  useDocumentTitle(name ?? "Employee");
+  // The number, not the name: tab titles are kept in browser history (F9.1 R2).
+  useDocumentTitle(employee.data?.employee_number ?? "Employee");
 
   const backLink = (
     <Link to={backTo} className="d-inline-block mb-3">

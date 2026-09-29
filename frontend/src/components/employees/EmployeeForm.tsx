@@ -24,6 +24,23 @@ import type { EmploymentStatus } from "@/services/reference.types";
 // Shared create/edit form (FRONTEND_PLAN.md T7, T8). Required fields are checked here; everything else
 // (formats, uniqueness, money scale per currency, hire date vs salary) comes back as the API's 422 details.
 
+/** API field names this form shows under its own fields (the salary ones only while a salary is added). */
+const FORM_FIELDS = [
+  "employee_number",
+  "first_name",
+  "last_name",
+  "email",
+  "hired_on",
+  "country_id",
+  "department_id",
+  "employment_status",
+] as const;
+const SALARY_FIELDS = [
+  "initial_salary.amount",
+  "initial_salary.currency_code",
+  "initial_salary.effective_from",
+] as const;
+
 interface EmployeeFormProps {
   mode: "create" | "edit";
   initialValues: EmployeeFormValues;
@@ -53,6 +70,14 @@ export default function EmployeeForm({
   const apiErrors = fieldErrors(error) as EmployeeFieldErrors;
   const errorFor = (field: EmployeeFieldName) =>
     requiredErrors[field] ?? apiErrors[field];
+  // 422 messages for fields this form does not show are listed in the alert, so none is lost (F9.1 R3).
+  const shownFields: readonly string[] = [
+    ...FORM_FIELDS,
+    ...(mode === "create" && values.addSalary ? SALARY_FIELDS : []),
+  ];
+  const unshownApiErrors = Object.entries(apiErrors).filter(
+    ([field]) => !shownFields.includes(field),
+  );
   const hasApiFieldErrors = Object.keys(apiErrors).length > 0;
 
   function set<K extends keyof EmployeeFormValues>(
@@ -87,9 +112,13 @@ export default function EmployeeForm({
     <Form noValidate onSubmit={handleSubmit}>
       {error !== null && error !== undefined && (
         <Alert variant="danger" role="alert">
-          {hasApiFieldErrors
-            ? "Please correct the highlighted fields."
-            : userMessage(error)}
+          {!hasApiFieldErrors
+            ? userMessage(error)
+            : unshownApiErrors.length === 0
+              ? "Please correct the highlighted fields."
+              : unshownApiErrors
+                  .map(([field, message]) => `${field} ${message}`)
+                  .join(". ")}
           {isApiError(error) &&
             error.code === "invalid_csrf_token" &&
             " Reload the page and try again."}

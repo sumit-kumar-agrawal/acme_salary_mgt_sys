@@ -28,9 +28,12 @@ export function useEmployee(id: number | null) {
   });
 }
 
-/** A positive integer id from the URL, or null (e.g. "/employees/abc"): never sent to the API. */
+/**
+ * A positive integer id from the URL, or null (e.g. "/employees/abc"): never sent to the API. At most 15
+ * digits, so Number() keeps it exact (F9.1 R4).
+ */
 export function parseEmployeeId(value: string | undefined): number | null {
-  return value && /^[1-9]\d{0,17}$/.test(value) ? Number(value) : null;
+  return value && /^[1-9]\d{0,14}$/.test(value) ? Number(value) : null;
 }
 
 /** "Back to employees" target: the list URL the user came from (T5), if it is the internal employee list. */

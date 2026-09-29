@@ -45,8 +45,10 @@ describe("EmployeeDetailPage", () => {
     expect(within(profile).getByText("Active")).toBeInTheDocument();
     expect(within(profile).getByText("2021-04-12")).toBeInTheDocument();
     await waitFor(() =>
-      expect(document.title).toBe("Rao, Asha · Salary Management"),
+      expect(document.title).toBe("EMP-00101 · Salary Management"),
     );
+    // Tab titles are kept in browser history, so the name is not in it (F9.1 R2).
+    expect(document.title).not.toMatch(/Rao|Asha/);
   });
 
   it("shows — for a missing email or hire date", async () => {
@@ -109,6 +111,15 @@ describe("EmployeeDetailPage", () => {
 
   it("does not request a non-numeric id", async () => {
     const api = renderDetail("/employees/abc");
+
+    expect(
+      await screen.findByRole("heading", { name: "Employee not found" }),
+    ).toBeInTheDocument();
+    expect(api.requestedIds).toEqual([]);
+  });
+
+  it("does not request an id too long to be exact as a number (F9.1 R4)", async () => {
+    const api = renderDetail("/employees/1234567890123456");
 
     expect(
       await screen.findByRole("heading", { name: "Employee not found" }),

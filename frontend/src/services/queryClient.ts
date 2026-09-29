@@ -32,3 +32,14 @@ export function createQueryClient(): QueryClient {
     },
   });
 }
+
+/**
+ * Analytics and report queries read salaries and each employee's current country, department, and status
+ * (API spec §8.1). Any write that changes those marks them stale (FRONTEND_PLAN.md U4, F9.1 R1).
+ */
+const ANALYTICS_AND_REPORT_KEYS = [["analytics"], ["reports"]] as const;
+
+export function invalidateAnalyticsAndReports(queryClient: QueryClient): void {
+  for (const queryKey of ANALYTICS_AND_REPORT_KEYS)
+    void queryClient.invalidateQueries({ queryKey });
+}

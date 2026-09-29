@@ -16,6 +16,7 @@ import {
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { isApiError } from "@/services/api";
 import { employeeService } from "@/services/employeeService";
+import { invalidateAnalyticsAndReports } from "@/services/queryClient";
 
 // Edit an employee, sending only the changed fields (FRONTEND_PLAN.md T7, T9, T10). Salary never changes here.
 export default function EmployeeEditPage() {
@@ -35,6 +36,8 @@ export default function EmployeeEditPage() {
     onSuccess: async (saved) => {
       queryClient.setQueryData(employeeKeys.detail(saved.id), saved);
       await queryClient.invalidateQueries({ queryKey: employeeKeys.lists() });
+      // Country, department, and status changes move the employee in analytics and reports (F9.1 R1).
+      invalidateAnalyticsAndReports(queryClient);
       void navigate(detailPath, {
         state: { notice: "Changes saved.", from: listPath },
       });
