@@ -248,7 +248,7 @@ With an odd count this picks the middle row; with an even count it averages the 
 
 ### 7.3 Distribution bands per currency (D22)
 
-There are 10 fixed-width bands between each currency's MIN and MAX. A row's band is `LEAST(FLOOR((amount - min) / ((max - min) / 10)), 9)`. The minimum falls in band 0 and the maximum in band 9. If `max = min`, all rows go in a single band. The response returns `lower`, `upper`, and `count` for each band. Bands are lower-inclusive and upper-exclusive, except the last band, which includes its upper edge.
+There are 10 fixed-width bands between each currency's MIN and MAX. A row's band index is the number of k = 1…9 with `(amount - min) * 10 >= k * (max - min)` (implemented in 5.1). This uses only exact decimal multiplication; dividing by a pre-computed width would let MySQL's rounded decimal division move a value that sits on an edge. The minimum falls in band 0 and the maximum in band 9. If `max = min`, all rows go in a single band. All 10 bands are returned, including empty ones. Edges are exact (`min + k * (max - min) / 10`, computed in Ruby with BigDecimal) and rounded to minor units only for display. The response returns `lower`, `upper`, and `count` for each band. Bands are lower-inclusive and upper-exclusive, except the last band, which includes its upper edge.
 
 ### 7.4 Breakdown (by country or department)
 
@@ -256,7 +256,7 @@ Group by `(e.country_id | e.department_id, sr.currency_code)` and compute the co
 
 ### 7.5 Salary report (JSON and CSV, D19/D24)
 
-Employees joined to their in-effect salary as of `:as_of` (INNER JOIN, so employees with no salary on that date are excluded), plus the country and department names. It uses the same employee filters as analytics plus `q`. Sorting is by `employee_number` by default, or by `last_name` or `(currency_code, amount)` from the API allowlist, always with `id` as the tie-breaker. The JSON form is paginated. The CSV is read in batches of 1,000 and capped at 10,000 rows.
+Employees joined to their in-effect salary as of `:as_of` (INNER JOIN, so employees with no salary on that date are excluded), plus the country and department names. It uses the same employee filters as analytics plus `q`. Sorting is by `employee_number` by default, or by `last_name` or `(currency_code, amount)` from the API allowlist, always with `id` as the tie-breaker. The JSON form is paginated. The CSV runs the same ordered query once with `LIMIT 10,001` (only the allowlisted columns are plucked); more than 10,000 rows returns `422 export_too_large`. Batch iteration is not used because it forces primary-key order.
 
 ### 7.6 Employee search
 

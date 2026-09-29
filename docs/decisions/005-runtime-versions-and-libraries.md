@@ -53,4 +53,5 @@ The project owner generated `backend/` with the Rails 8 default generator, not t
 - `json` is constrained to `< 3` in the Gemfile: json 3.x removed the `quirks_mode` option that ActiveSupport 8.0 still passes, which breaks JSON rendering. Remove the constraint once Rails supports json 3.
 - Rails 8's built-in `rate_limit` and Solid Cache replace the in-process cache concern noted in the architecture.
 - JSON shapes live in `app/views/api/v1/**/*.json.jbuilder`, and the rounding of monetary aggregates happens there.
+- The CSV export (BACKEND_PLAN.md 5.3) uses Ruby's `csv` library, a default gem on Ruby 3.2, so no Gemfile entry is needed. From Ruby 3.4 it is a bundled gem: add `gem "csv"` to the Gemfile as part of any Ruby upgrade.
 - Any further gem needs an amendment to this ADR with a justification.

@@ -308,7 +308,7 @@ Responses:
 
 ## 8. Analytics
 
-All analytics endpoints are read-only aggregates and never return individual salaries.
+All analytics endpoints are read-only aggregates and never return individual salaries. Responses (and the §9 report) carry `Cache-Control: no-store` because they contain salary data. There is no minimum group size: the single HR Manager may already see individual salaries through the report, so a group of one is not suppressed (revisit if a second role is added).
 
 ### 8.1 Common parameters and population (D20)
 
@@ -319,7 +319,9 @@ All analytics endpoints are read-only aggregates and never return individual sal
 | `department_id` | integer | Optional, must exist |
 | `employment_status` | string | Optional. When omitted, `active` and `on_leave` are included and `terminated` is excluded (D13). When given, only that status is included. |
 
-Population: employees matching the filters who have a salary in effect on `as_of`. Every response echoes the applied `as_of`, `filters`, and `period: "monthly"`.
+Population: employees matching the filters who have a salary in effect on `as_of`. Every response echoes the applied `as_of`, `filters`, and `period: "monthly"`. In `filters`, `employment_status` is always an array (`["active", "on_leave"]` by default), and absent IDs are `null`.
+
+Country, department, and employment status are **current** values with no history. For a past `as_of`, the filters apply today's values, so employees terminated since then are excluded by default. Employees whose `hired_on` is after `as_of` are not in scope; an employee with no `hired_on` is.
 
 ### 8.2 `GET /analytics/summary`
 
@@ -346,7 +348,7 @@ Population: employees matching the filters who have a salary in effect on `as_of
 }
 ```
 
-`employees_in_scope` counts employees who match the filters. `employees_without_salary` is the subset with no salary in effect on `as_of`; they are excluded from every monetary metric. `by_currency` is ordered by `currency_code`.
+`employees_in_scope` counts employees who match the filters and were hired on or before `as_of`. `employees_without_salary` is the subset with no salary in effect on `as_of`; they are excluded from every monetary metric. `by_currency` is ordered by `currency_code`.
 
 Metric definitions:
 - `total` is the sum of the monthly amounts.
@@ -379,7 +381,7 @@ Ten fixed-width bands per currency, between that currency's min and max (D22).
 }
 ```
 
-Each band includes its `lower` value and excludes its `upper` value, except the last band, which includes both. If all amounts are equal, there is a single band. A currency with no employees in scope is omitted.
+Each band includes its `lower` value and excludes its `upper` value, except the last band, which includes both. All ten bands are returned, including bands with `count: 0`. If all amounts are equal, there is a single band. Band membership uses the exact edges; `lower` and `upper` are rounded (half up) to the currency's minor units for display only. A currency with no employees in scope is omitted.
 
 ### 8.4 `GET /analytics/breakdown`
 
@@ -427,7 +429,7 @@ Both endpoints accept identical filters and share one query object, so the displ
 
 - the parameters in §8.1 (`as_of`, `country_id`, `department_id`, `employment_status`, with the same default population);
 - `q` as in §6.1;
-- `sort`: `employee_number` (default), `last_name`, `amount`, each with an optional `-` prefix. Sorting by `amount` groups rows by `currency_code` first.
+- `sort`: `employee_number` (default), `last_name` (then `first_name`), `amount`, each with an optional `-` prefix. Sorting by `amount` groups rows by `currency_code` first (always ascending); the `-` prefix reverses only the amount order. Ties are broken by employee `id`.
 
 Rows include only employees with a salary in effect on `as_of`.
 
@@ -464,11 +466,13 @@ Rows include only employees with a salary in effect on `as_of`.
 
 The CSV takes the same parameters, except `page` and `per_page`, which are ignored.
 
-- **Headers:** `Content-Type: text/csv; charset=utf-8`, `Content-Disposition: attachment; filename="salary-report-2026-09-28.csv"`, and `Cache-Control: no-store`.
+- **Headers:** `Content-Type: text/csv; charset=utf-8`, `Content-Disposition: attachment; filename="salary-report-<as_of>.csv"` (e.g. `salary-report-2026-09-28.csv`; the date is the applied `as_of`), and `Cache-Control: no-store`.
+- **Body:** a UTF-8 byte-order mark, a header row with the column names below, then one row per employee in the same order as the JSON report. `monthly_amount` is rounded to the currency's minor units, with no thousands separator. Dates are `YYYY-MM-DD`. An empty result is a header-only file.
 - **Columns (fixed allowlist, no email):** `employee_number, first_name, last_name, country_code, country_name, department, employment_status, monthly_amount, currency_code, effective_from`
 - **Formula-injection guard:** any cell beginning with `=`, `+`, `-`, `@`, a tab, or a carriage return is prefixed with `'`.
 - **Row cap:** 10,000 rows (D24). If the filtered set is larger, the response is `422` with code `export_too_large` and the message "Narrow the filters to export at most 10,000 rows." Nothing is truncated silently.
-- **No login:** `401` returns the JSON error envelope, not a CSV.
+- **Errors:** `400`, `401`, and `422` return the JSON error envelope, not a CSV.
+- **Formats:** only `/reports/salaries` accepts `.csv`. Other extensions (e.g. `.xml`) return `404`; analytics endpoints always answer JSON.
 
 ## 10. Status and error codes
 

@@ -24,6 +24,19 @@ Rails.application.routes.draw do
         resources :salary_records, only: %i[index show create update]
       end
 
+      # Read-only, per-currency compensation analytics (docs/api-specification.md §8, BACKEND_PLAN.md M7).
+      namespace :analytics do
+        resource :summary, only: :show
+        resource :distribution, only: :show
+        resource :breakdown, only: :show
+      end
+
+      # Record-level salary report sharing the analytics filters (docs/api-specification.md §9).
+      # JSON or CSV only (5.3); any other extension falls through to the JSON 404 catch-all.
+      namespace :reports do
+        resources :salaries, only: :index, constraints: { format: /json|csv/ }
+      end
+
       # Must stay last: any other /api/v1 path returns a JSON 404, never HTML (BACKEND_PLAN.md L10).
       match "(*path)", to: "not_found#show", via: :all
     end

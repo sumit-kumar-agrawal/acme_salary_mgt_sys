@@ -56,14 +56,16 @@ backend/app/
     api/v1/employees_controller.rb
     api/v1/salary_records_controller.rb
     api/v1/countries_controller.rb, departments_controller.rb, currencies_controller.rb
-    api/v1/analytics_controller.rb      # summary, distribution, breakdown
+    api/v1/analytics/summaries_controller.rb, distributions_controller.rb, breakdowns_controller.rb  # singular resources, #show (M7)
     api/v1/reports/salaries_controller.rb  # JSON + CSV formats
     concerns/authentication.rb          # require_login, current_user, session expiry
     concerns/error_handling.rb          # rescue_from → error envelope
+    concerns/analytics_filters.rb       # shared analytics/report filters → Analytics::Population; Cache-Control: no-store
     concerns/pagination.rb              # wraps pagy: validates page/per_page (1–100), builds meta
   models/            user, employee, salary_record, country, department, currency
   services/          employees/create_service, salaries/change_service, salaries/correction_service
-  queries/           employee_search_query, salary_report_query, analytics/{summary,distribution,breakdown}_query
+  queries/           employee_search_query, salary_report_query, analytics/{population,median,summary_query,distribution_query,breakdown_query}
+  exports/           salary_report_csv (CSV form of the salary report; column allowlist, formula guard)
   views/api/v1/      jbuilder templates per resource, plus shared partials (_error, _pagination_meta, _money)
 backend/lib/tasks/   hr_user.rake (provision HR user from ENV), synthetic seed generator
 ```
@@ -128,12 +130,16 @@ A correction (`PATCH`) follows the same lock-then-verify pattern. `Salaries::Cor
 
 `GET /reports/salaries` (JSON, paginated) and `GET /reports/salaries.csv` both build `SalaryReportQuery` from the same permitted filters, so the displayed and exported rows are always the same set (FR-04, FR-06).
 
-The CSV path:
-- streams rows in batches;
-- enforces the 10,000-row cap (D24);
+The CSV path (`SalaryReportCsv`, implemented in 5.3):
+- runs one query that plucks the allowlisted columns in report order with `LIMIT 10,001`, so the rows and their order match the JSON report (Rails batch iteration would force primary-key order);
+- enforces the 10,000-row cap (D24): more rows return `422 export_too_large`, with nothing truncated;
+- builds the file in memory with `CSV.generate` (about 0.7 MB and 0.3 s for the 9.3k-row demo export) and sends it with `send_data`; nothing is streamed, so errors can still be reported as JSON;
 - writes only allowlisted columns;
 - prefixes any cell starting with `=`, `+`, `-`, `@`, tab, or CR with a single quote to block formula injection;
+- starts with a UTF-8 byte-order mark so Excel shows accented names correctly;
 - sets `Cache-Control: no-store`.
+
+Only the report's `index` action may answer `.csv` (`allow_csv :index` in `BaseController`); every other request is forced to JSON, and the report route accepts only `json` and `csv`, so `.xml` returns the JSON `404`. Errors on the CSV path are JSON envelopes.
 
 ## 5. Authentication and authorization boundary
 
@@ -194,7 +200,7 @@ Every error uses one envelope, rendered by the `ErrorHandling` concern:
 | ~10k employees | Pagination, targeted indexes, SQL aggregates | No caching layer; re-evaluate after measurement in Phase 6 |
 | Salary integrity | Row lock + transaction + DB constraints | Mid-history inserts rejected in v1 (D8) |
 | Median on MySQL | Window-function query in one query object | More complex SQL than PostgreSQL's `percentile_cont`; covered by known-data tests |
-| Export size | Synchronous, streamed, capped at 10k rows | No background export; revisit only if the cap proves insufficient |
+| Export size | Synchronous, built in memory from one capped query (10k rows) | No background export; revisit only if the cap proves insufficient |
 | Single user auth | Session cookie + CSRF | Not suited to third-party API clients (not required) |
 
 ## 10. Out of scope for this architecture

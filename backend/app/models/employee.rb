@@ -23,6 +23,15 @@ class Employee < ApplicationRecord
   validate :hired_on_not_after_first_salary
   validate :hired_on_is_a_date
 
+  # Contains match on number and names for list and report search (D27, BACKEND_PLAN.md M10).
+  # The utf8mb4_unicode_ci collation makes it case- and accent-insensitive; LIKE wildcards in the
+  # input are escaped, so "%" and "_" match literally.
+  scope :matching, ->(q) {
+    pattern = "%#{sanitize_sql_like(q)}%"
+    where("employees.employee_number LIKE :pattern OR employees.first_name LIKE :pattern " \
+          "OR employees.last_name LIKE :pattern", pattern: pattern)
+  }
+
   # The salary record in effect on `date` (D7), or nil.
   def current_salary(date = Date.current)
     salary_records.in_effect_on(date).first

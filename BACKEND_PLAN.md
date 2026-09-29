@@ -589,23 +589,154 @@ Notes:
 ## Phase 5 — Compensation analytics and report APIs
 **Goal:** Provide accurate, currency-aware answers to organizational compensation questions.
 
+### Phase 5 review findings (2026-09-29)
+
+Inputs: requirements §3 (FR-04–FR-06), §7, §10–§11; API spec v2.0 §1–§2, §8–§12; database design §4, §7; architecture v2.2 §2–§4, §6–§8; ADRs 002–005; the Phase 4 codebase. No code written. Observed:
+- **Reusable from Phase 4:** `Api::QueryParams` (`date_param`, `id_param`, `enum_param`, `sort_param`, `string_param`), `Api::Pagination` (with `@pagination_meta`), `Api::FormattingHelper#money` (BigDecimal, half-up), the `ErrorHandling` envelope, `SalaryRecord.in_effect_on(date)`, and `EmployeeSearchQuery` (its `q` matching is a private method).
+- **`BaseController` forces JSON on every request** (`prepend_before_action :force_json_format`), and the routes default to `format: :json`. As things stand, `GET /reports/salaries.csv` would be treated as JSON. `render_error` already renders with `formats: :json`, so error envelopes stay JSON.
+- There is no `export_too_large` handling yet. The `csv` library is a Ruby 3.2 default gem and is not in the `Gemfile`, which is fine on 3.2. On Ruby 3.4 or later it becomes a bundled gem and must be declared.
+- Architecture §3 plans one `AnalyticsController` with three custom actions. `.claude/rules/backend.md` asks for RESTful conventions.
+- Architecture §4.4 says the CSV "streams rows in batches", and database design §7.5 says "batches of 1,000". Rails `find_each`/`in_batches` always iterate in primary-key order, which conflicts with "same rows *and order* as the JSON report" under `sort=last_name` or `amount`.
+- Test DB and dev DB run MySQL 8.4, so CTEs and window functions (median, D21) are available. Minitest 6 has no `minitest/mock`; tests override methods with `define_singleton_method` (H5).
+- Dev DB holds 10,000 demo employees and 16,826 salary records in 7 currencies (JPY 0 and KWD 3 minor units). These can be used for read-only timing checks.
+- **Repository state (not Phase 5 code, but it blocks a clean commit):** the git index has 31 staged **additions at the repo root** (`Gemfile`, `app/…`, `config/…`, `db/…`, `test/…`) that don't exist in the working tree (status `AD`), plus a staged rename of `backend/ .ruby-gemset`. This looks like an accidental `git add` from the wrong directory.
+
+#### A. Missing decisions
+
+| ID | Decision | Recommendation | Needed by |
+|---|---|---|---|
+| M1 | **One shared population.** Summary, distribution, breakdown, and the report must use identical filter and as-of semantics. | Add an `Analytics::Population` query object. It builds `employees` filtered by `country_id`, `department_id`, and `employment_status` (default `active` + `on_leave`, D20), then `INNER JOIN`s the salary record `in_effect_on(as_of)`. All three analytics queries and `SalaryReportQuery` start from it. Also add an `employees_in_scope` relation (same filters, no salary join) for the summary counts. | 5.1 |
+| M2 | **What the filters mean for a past `as_of`.** Status, country, and department are *current* values with no history (requirements §7). With `as_of` in the past, today's `terminated` employees are excluded even if they were active then, and employees hired after `as_of` count as "without salary". | Document the limitation, and echo `as_of` in every response (already specified). Exclude employees whose `hired_on > as_of` from `employees_in_scope` (NULL `hired_on` is included), so `employees_without_salary` isn't inflated by people not yet hired. Record this in API spec §8.2. | 5.1 |
+| M3 | **Median SQL execution.** | Run the design §7.2 CTE through `connection.select_all` with a `sanitize_sql_array` bind for `as_of`. The inner population SQL comes from the AR relation (`to_sql`), so no user string is interpolated. Summary uses 3 queries: counts, grouped aggregates, and median. They are merged in Ruby by `currency_code`. Currency `minor_units` are loaded once (7 rows). | 5.1 |
+| M4 | **Distribution bucket formula and edges.** Design §7.3 divides by a pre-computed width, `(max − min) / 10`. MySQL rounds decimal division, so values on or near an edge can land in the wrong band. The spec also doesn't say whether empty bands are returned or how edges are rounded for display. | Bucket index `LEAST(FLOOR((amount − min) * 10 / (max − min)), 9)`, with min and max per currency from a CTE. Always return **all 10 bands, including zero-count bands** (1 band when min = max), so charts stay stable. Edges are computed in Ruby with BigDecimal as `min + k × (max − min) / 10`. Counts use the exact edges; displayed `lower`/`upper` are rounded half-up to minor units (display only). Record this in API spec §8.3 and design §7.3. | 5.1 |
+| M5 | **Breakdown dimension safety and filter combinations.** | `by` is validated with `enum_param(:by, %w[country department])` and mapped through a fixed hash to `employees.country_id` / `employees.department_id`. User input never reaches SQL. The other filters remain allowed alongside `by`, e.g. `by=department&country_id=5`. Metrics are count, total, average, and median (no min/max, per spec §8.4). | 5.1 |
+| M6 | **Rounding of aggregates.** | SQL returns exact `DECIMAL` values (`AVG` returns 4 extra digits of scale). Views round average, median, total, min, max, and band edges with `money(value, minor_units)` (half-up, L14). A JPY median of `100001.5` is shown as `"100002"`. | 5.1 / 5.2 |
+| M7 | **Controllers and routes (RESTful).** | `namespace :analytics { resource :summary, :distribution, :breakdown, only: :show }` → `Api::V1::Analytics::{Summaries,Distributions,Breakdowns}Controller#show`. `namespace :reports { resources :salaries, only: :index }` → `Api::V1::Reports::SalariesController#index` for JSON and CSV. The paths match API spec §11. Update architecture §3, which currently shows a single `analytics_controller.rb`. Declare these routes before the catch-all. | 5.2 |
+| M8 | **Shared filter parsing and echo.** | Add an `Api::AnalyticsFilters` concern (built on `QueryParams`) that returns the parsed filters plus the echo hash. `employment_status` is **always an array** (`["active","on_leave"]` by default, `["terminated"]` when requested). Absent IDs are `null`. `as_of` is an ISO date. The report echo adds `q`. | 5.2 |
+| M9 | **Report sort.** | `employee_number` (default), `last_name` (then `first_name`), and `amount`, each followed by `id` as the tie-breaker. `amount` and `-amount` both order by `currency_code ASC` first; only the amount direction changes. | 5.2 |
+| M10 | **Shared `q` search.** `EmployeeSearchQuery#search` is private. | Move it into an `Employee.matching(q)` scope used by both `EmployeeSearchQuery` and `SalaryReportQuery`. This is a small Phase 4 refactor that the existing employee search tests already cover. | 5.2 |
+| M11 | **Report `meta`.** | A `_report_meta` partial that renders `_pagination_meta` plus `as_of` and `filters` (API spec §9.1). | 5.2 |
+| M12 | **Caching of salary responses.** Rails' default is `Cache-Control: max-age=0, private, must-revalidate`, which still lets a browser store the response. | Send `Cache-Control: no-store` on analytics and report JSON as well as the CSV. They carry salary data (security rules). Record this in API spec §8 and §9. | 5.2 |
+| M13 | **Small-group disclosure.** A breakdown group of one employee reveals that person's salary. | No minimum group size. The single HR Manager is already authorised to see individual salaries through the report. Record this so it isn't mistaken for an oversight, and revisit if a second role is added. | 5.2 |
+| M14 | **`.csv` versus the forced JSON format.** | `force_json_format` keeps `csv` only for actions that declare it (e.g. a class-level `csv_actions :index` on the report controller). Every other format, such as `.xml` or `.csv` on analytics, is still forced to JSON or gets `404`. Errors on a CSV request (`400`/`401`/`422`) render the JSON envelope with `application/json` (spec §9.2). | 5.3 |
+| M15 | **CSV generation: no streaming, and a single-query cap.** | Query `SalaryReportQuery` with `limit(10_001)` and `pluck` the allowlisted columns in the report order. If more than 10,000 rows come back, return `422 export_too_large`. Otherwise build the file with `CSV.generate` and `send_data`. Rationale: one query means no count/fetch race. `find_each` would break the ordering. About 10k rows (1–2 MB) fits in memory, and streaming can't report an error after the first byte. Replace "streams in batches" in architecture §4.4 and design §7.5. The cap lives in a constant read through a method, so tests can lower it without inserting 10k rows. | 5.3 |
+| M16 | **CSV file details.** | Header row = the allowlisted column names (spec §9.2). Amounts use `money()` formatting with no thousands separators. The filename uses the **`as_of` date** (`salary-report-<as_of>.csv`). The formula guard applies to every text cell. Prefix a **UTF-8 BOM** so Excel shows accented names correctly, since HR is moving off Excel. The `Content-Type` stays `text/csv; charset=utf-8`. Record this in API spec §9.2. | 5.3 |
+| M17 | **Infrastructure.** | No caching layer, background jobs, new indexes, or new gems in Phase 5 (`csv` is stdlib on 3.2). Check `EXPLAIN` and timing on the 10k demo data read-only, and pass the results to 6.2. | 5.1–5.3 |
+| M18 | **Test data.** | Build small known datasets with factories, explicit amounts, and `travel_to`. Never use the demo seeder in tests. Include two currencies of very different magnitude (e.g. JPY and KWD) in every aggregate test to catch accidental cross-currency mixing. | 5.1 |
+
+#### B. Assumptions
+- API spec v2.0 §8–§9 is the contract. The clarifications above (M2, M4, M8, M12, M16) are written into the spec in the subphase that implements them.
+- Country, department, and employment status are current values for any `as_of` (no attribute history, requirements §7).
+- There is no FX conversion. Every monetary figure is per currency and monthly (D3, ADR 002).
+- There is one role, so being signed in is the only authorization check (D17). Every Phase 5 route requires login.
+- About 10k employees and 17k salary records. SQL aggregates are expected to take tens of milliseconds. This is not an SLA; 6.2 measures it.
+- The CSV is synchronous (D24); no Solid Queue job.
+
+#### C. Dependencies
+
+| Dependency | Blocks | Owner |
+|---|---|---|
+| Approval of M1–M18 (especially M2, M4, M12, M16, which change documented behaviour) | 5.1 | Project owner |
+| Phase 4 concerns, helpers, and `in_effect_on` | 5.1–5.3 | Done |
+| MySQL 8.0+ for CTEs and window functions | 5.1 | Available (8.4, dev and test) |
+| 5.1 population and query objects | 5.2 | — |
+| 5.2 `SalaryReportQuery`, filters concern, and report controller | 5.3 | — |
+| Clean git index (unstage the root-level `AD` entries) | A clean Phase 4/5 commit, not the code | Project owner |
+| Carried over: `RAILS_LOG_LEVEL` / `prepared_statements` decision (4.4); README health line (2.2) | Phase 6.3 / 7.2 | Project owner |
+
+#### D. Risks
+
+| Risk | Likelihood / impact | Mitigation |
+|---|---|---|
+| Median or bands wrong on edge cases (even count, a single row, all amounts equal, values on a band edge) | Medium / High | M3, M4; known-data tests for each case |
+| Currencies mixed by accident (e.g. global min/max in distribution, a median partition missing `currency_code`) | Low / High | Every CTE partitioned by currency; M18 two-magnitude test data; assert no top-level total key |
+| JSON report and CSV diverge in rows or order | Medium / Medium | One `SalaryReportQuery`; M15 avoids `find_each`; a test concatenates JSON pages and compares them with the CSV |
+| `.csv` served as JSON, or errors served as CSV | High (as the code stands) / Medium | M14 plus tests for `401`/`400`/`422` on the CSV path and `.xml` → 404 |
+| CSV formula injection, or garbled names in Excel | Medium / Medium | Guard on every text cell with tests for `= + - @` tab CR; M16 BOM |
+| Past `as_of` misread as a historical headcount | Medium / Low | M2 documentation; `as_of` echoed |
+| SQL injection through `by`, `sort`, or `q` | Low / High | Fixed column maps, `sanitize_sql_like`, bound parameters; Brakeman clean |
+| Salary responses stored by the browser or an intermediary | Low / Medium | M12 `no-store` on every Phase 5 response, asserted in tests |
+| Slow aggregates or report on 10k rows | Low / Medium | SQL aggregates; `includes` / `pluck`; M17 timing check; indexes only in 6.2 if measured |
+| Date-dependent flaky tests | Medium / Low | `travel_to` and explicit `as_of` in every test |
+| Ruby upgrade later drops `csv` from the default gems | Certain on Ruby ≥ 3.4 / Low | Note in ADR 005: add `gem "csv"` with the upgrade |
+
 ### 5.1 Metric definitions and query layer
-**Prompt:** `Implement the agreed compensation metrics and query layer from the requirements. Define how filters and effective dates apply. Group totals by currency and never combine unlike currencies without an approved conversion policy. Add unit/service tests.`
-**Deliverables:** Analytics query/service layer and tests.
-**Acceptance:** Metric definitions are explicit and calculations are tested against representative data.
-**Status:** Not Started
+**Prompt:** `Per M1–M6 and M18: add Analytics::Population and Analytics::{Summary,Distribution,Breakdown}Query on the shared in-effect salary scope (design §7), per-currency only, with the median and bands computed in MySQL. Unit-test against small known datasets. No endpoints.`
+**Tasks:**
+1. ~~Owner: approve M1–M18.~~ The 5.1 defaults (M1–M6, M17, M18) were applied with the owner's request to implement 5.1 (2026-09-29). M7–M16 are still to be confirmed before 5.2 and 5.3.
+2. ~~`Analytics::Population`: filters, default statuses, `INNER JOIN` to `in_effect_on(as_of)`, and the `employees_in_scope` relation with the M2 `hired_on` rule.~~ Done 2026-09-29.
+3. ~~`Analytics::SummaryQuery`: in-scope and without-salary counts, then per-currency count, total, average, min, and max, then the median CTE (M3).~~ Done 2026-09-29 (`Analytics::Median` is shared with the breakdown query).
+4. ~~`Analytics::DistributionQuery`: per-currency min and max, the bucket formula, 10 bands including empty ones, a single band when min = max, and BigDecimal edges (M4).~~ Done 2026-09-29.
+5. ~~`Analytics::BreakdownQuery`: `by` column map (M5), grouped by `(dimension, currency)`, median partitioned by both, ordered by name then currency.~~ Done 2026-09-29.
+6. ~~Tests (factories, `travel_to`, JPY + KWD + 2-decimal currencies) covering the cases listed in the review.~~ Done 2026-09-29: 22 tests in `test/queries/analytics/`.
+7. ~~Read-only `EXPLAIN` and timing on the 10k dev data (M17).~~ Done 2026-09-29; see the notes below.
+
+**Deliverables:** Population and three analytics query objects, with unit tests.
+**Acceptance:**
+- Every metric in API spec §8.2–§8.4 has a test on known data.
+- No query produces a cross-currency figure.
+- Median and band edge cases pass.
+- `bin/rails test` passes on several seeds; RuboCop and Brakeman clean.
+
+**Status:** Done (2026-09-29). `bin/rails test` 205 runs, 704 assertions, 0 failures on 5 seeds (1, 42, 1234, 9876, 31337); `test/queries` alone 22 runs, 54 assertions. RuboCop 112 files clean; Brakeman 0 warnings (2 ignored).
+Notes:
+- **M4 refinement:** the band index is not `FLOOR((amount − min) × 10 / (max − min))`. It is the count of k = 1…9 with `(amount − min) × 10 ≥ k × (max − min)`, which uses only exact decimal multiplication, so MySQL's rounded division can't move an edge value. A test covers a non-terminating width (0.3): 100.89 is in band 2 and 100.90 in band 3. Design §7.3 and API spec §8.3 are to be updated in 5.2 task 5, together with the M2 wording.
+- Results are `Data` value objects with exact BigDecimals and `minor_units` per currency, so 5.2 views can round without another lookup (M6).
+- **10k dev data (read-only, query cache off, best of 5):** summary 41 ms, distribution 70 ms, breakdown by country 50 ms, by department 51 ms. Population: 9,429 employees in scope, 93 without a salary on 2026-09-28, 7 currencies, 15 country/currency rows; the band counts add up to each currency's employee count. `EXPLAIN`: a full scan of `employees` (9,429 of 10,000 rows match the status filter, so a scan is expected), then a `ref` lookup on `salary_records (employee_id, …)`. No index is needed now; pass these figures to 6.2.
+- With the query cache on (e.g. `rails runner` repeats), timings drop to about 1 ms. The figures above are uncached.
 
 ### 5.2 Analytics and salary report endpoints
-**Prompt:** `Expose approved compensation analytics (docs/api-specification.md §8) through Rails endpoints with documented filters and clear currency context. Return aggregates where possible rather than unnecessary individual salary details. Also implement the paginated JSON salary report GET /reports/salaries (§9.1, D19) on a SalaryReportQuery that 5.3 will reuse. Add integration tests and authorization checks.`
-**Deliverables:** Analytics endpoints, JSON salary report endpoint, and integration tests.
-**Acceptance:** Filtered and unfiltered responses are correct, documented, and access-controlled.
-**Status:** Not Started
+**Prompt:** `Per M7–M13: expose GET /analytics/summary, /analytics/distribution, and /analytics/breakdown (API §8) and the paginated JSON GET /reports/salaries (§9.1) on SalaryReportQuery built from Analytics::Population. Shared AnalyticsFilters concern, jbuilder views with money rounding, Cache-Control no-store, integration tests including 401 and 400 cases.`
+**Tasks:**
+1. ~~`Api::AnalyticsFilters` concern: parse `as_of`, `country_id`, `department_id`, `employment_status`, and `by`, and build the echo hash (M8).~~ Done 2026-09-29 (`by` is parsed in the breakdown controller; the echo is `Analytics::Population#filters`).
+2. ~~Routes (M7, before the catch-all); the three analytics controllers and their jbuilder views (`period: "monthly"`, `money()` per M6); `no-store` (M12).~~ Done 2026-09-29.
+3. ~~`Employee.matching(q)` extraction (M10); `SalaryReportQuery` (population + `q` + M9 sort + preloads); `Reports::SalariesController#index` (JSON, `paginate`) and the report meta (M11).~~ Done 2026-09-29.
+4. ~~Tests: `401` on all 4 routes; response shapes; filter echo; `400` cases; no employee-level fields in analytics; no `email` in the report; pagination; sort; `q`; no N+1; `Cache-Control: no-store`.~~ Done 2026-09-29: 17 integration tests.
+5. ~~Docs: API spec §8 and §9.1 clarifications (M2, M4, M8, M9, M12, M13); architecture §3 (M7); database design §7.3 (M4, carried over from 5.1).~~ Done 2026-09-29.
+6. ~~Live smoke on a spare port (signed out → `401` JSON); stop the server afterwards.~~ Done 2026-09-29.
+
+**Deliverables:** Three analytics endpoints, the JSON salary report, views, the filters concern, tests, and updated docs.
+**Acceptance:**
+- Filtered and unfiltered responses match API §8 and §9.1.
+- Every monetary figure is paired with `currency_code` and rounded to minor units.
+- Access control and parameter validation are tested; no N+1.
+- RuboCop and Brakeman clean.
+
+**Status:** Done (2026-09-29). `bin/rails test` 222 runs, 829 assertions, 0 failures on 5 seeds (1, 42, 1234, 9876, 31337); the new integration tests alone: 17 runs, 125 assertions. RuboCop 124 files clean; Brakeman 0 warnings (2 ignored). Live on :3108, signed out: `GET /analytics/summary`, `/analytics/distribution`, `/analytics/breakdown?by=country`, and `/reports/salaries` each return `401` JSON; the server was stopped.
+Notes:
+- M7–M13 defaults were applied with the owner's request to implement 5.2 (2026-09-29).
+- **M11 simplified:** the report `meta` is written inline in `reports/salaries/index.json.jbuilder` (reusing `_pagination_meta`) rather than in a separate `_report_meta` partial, since only one view uses it. The CSV has no `meta`.
+- `Cache-Control: no-store` uses Rails' `no_store` in a `before_action` of the concern, so it also covers `400` responses from those endpoints.
+- `GET /reports/salaries.csv` is still answered as JSON (forced format) until 5.3 (M14).
+- Controllers call `::Analytics::…` with a leading `::`, because the `Api::V1::Analytics` controller namespace would otherwise shadow the query namespace.
 
 ### 5.3 CSV/report export endpoint
-**Prompt:** `Implement the backend CSV export endpoint for filtered salary reports (FR-06, D24). Share the filter/query object with the JSON report, apply authorization, enforce the row cap, and protect against CSV formula injection. Add integration tests.`
-**Deliverables:** Export endpoint and tests.
-**Acceptance:** Exported rows match the JSON report for the same filters; only allowlisted columns appear; formula cells are escaped; over 10,000 rows returns `422 export_too_large`.
-**Status:** Not Started
+**Prompt:** `Per M14–M16 and D24: serve GET /reports/salaries.csv from the same controller and SalaryReportQuery. Allow csv only for that action; single-query 10,000-row cap returning 422 export_too_large; allowlisted columns; formula-injection guard; UTF-8 BOM; no-store and attachment headers; JSON error envelopes for every failure. Integration tests.`
+**Tasks:**
+1. ~~`BaseController` format handling (M14): CSV is allowed per action, and every other format still resolves to JSON or `404`.~~ Done 2026-09-29 (`allow_csv :index`; the report route is constrained to `json|csv`).
+2. ~~A CSV builder: column allowlist, `money()` amounts, formula guard, BOM (M16).~~ Done 2026-09-29 as `SalaryReportCsv` in `app/exports/`, not `Reports::SalaryCsv`. `app/services` is kept for multi-step writes (architecture §3), and a `Reports` module would clash with the `Api::V1::Reports` controller namespace.
+3. ~~Controller CSV branch: `limit(cap + 1)` → `422 export_too_large` or `send_data` with the three headers.~~ Done 2026-09-29 (rendered in the controller; no new `ErrorHandling` code).
+4. ~~Tests: CSV equals the JSON pages; header row; no `email`; formula triggers; JPY/KWD formatting; `page`/`per_page` ignored; cap → JSON `422`; JSON `401` and `400`; `.xml` → `404`; headers; BOM.~~ Done 2026-09-29: 8 integration tests.
+5. ~~Docs: architecture §3, §4.4 and §9 (M15); design §7.5; API spec §9.2 (M16); ADR 005 `csv` note.~~ Done 2026-09-29.
+6. ~~Live smoke: signed out `.csv` → `401` JSON; stop the server afterwards.~~ Done 2026-09-29.
+
+**Deliverables:** The CSV export on the report endpoint, the CSV builder, tests, and doc updates.
+**Acceptance:**
+- Exported rows equal the JSON report for the same filters and in the same order.
+- Only allowlisted columns appear, and formula cells are escaped.
+- Over 10,000 rows returns `422 export_too_large` with nothing truncated.
+- Every error on the CSV path is a JSON envelope.
+- RuboCop and Brakeman clean.
+
+**Status:** Done (2026-09-29). `bin/rails test` 230 runs, 886 assertions, 0 failures on 5 seeds (1, 42, 1234, 9876, 31337); the new CSV tests alone: 8 runs, 57 assertions. RuboCop 126 files clean; Brakeman 0 warnings (2 ignored). Live on :3109, signed out: `.csv` → `401` JSON, `.xml` → `404` JSON; the server was stopped. Read-only on the 10k dev data: the unfiltered export is 9,336 rows and 0.73 MB, built in about 300 ms (uncached, best of 3).
+Notes:
+- M14–M16 defaults were applied with the owner's request to implement 5.3 (2026-09-29).
+- The cap is read through `SalaryReportCsv.max_rows`. Tests lower it with `define_singleton_method` (no `minitest/mock` in minitest 6), so a 10,001-row fixture isn't needed; the boundary (exactly the cap allowed, cap + 1 rejected) is tested.
+- **Formula-guard test finding:** `Employee` strips whitespace, and `normalizes` also applies to `update_columns` and to hash-form `update_all`, so a leading tab or CR can only reach the table through a raw SQL write. The test inserts those two cases with `update_all([ "first_name = ?", … ])` to prove data written outside the app is still neutralised.
+- `page` and `per_page` are ignored on the CSV path and not validated there (API §9.2).
+- `.csv` on analytics endpoints still answers JSON (they don't declare `allow_csv`).
+
+**Phase 5 gate: passed on 2026-09-29.** The analytics (summary, distribution, breakdown), JSON report, and CSV export endpoints pass correctness tests on known data (per currency, with no cross-currency figures) and access-control tests (`401` on every route, JSON errors on the CSV path, `no-store`).
 
 **Phase gate:** Analytics, report, and export endpoints pass correctness and access-control tests.
 
@@ -707,14 +838,19 @@ Notes:
 | 2026-09-28 | 4.2 | `Api::BadRequest`; `Api::QueryParams` (page, per_page 1–100, sort allowlist, enum, existing IDs, string length, ISO dates, single values; L12); `Api::Pagination` (Pagy 43 `pagy(:offset, …)` with validated limit and page, own meta with `total_pages` = ceil, L13), included in `BaseController`; `_pagination_meta` partial; `Api::FormattingHelper#money` (BigDecimal half-up, L14); `ErrorHandling` maps `BadRequest` and `ParameterMissing` to `400` with `details`. `GET /countries` (by name), `/departments` (by name), `/currencies` (by code), sign-in required. 24 new tests (QueryParams, Pagination and meta partial, money, reference endpoints); 4.1 `500` tests rewritten without `with_routing` | `bin/rails test` ×6 seeds: 139 runs, 431 assertions, 0 failures; RuboCop 91 files clean; Brakeman 0 warnings; live smoke on :3105 (401 ×3, 404 on `POST`) | Pagination's first real consumer is the employee list (4.3) |
 | 2026-09-28 | 4.3 | `EmployeeSearchQuery` (filters, escaped contains `q`, allowlisted sort with `id` tie-break, `includes`). `EmployeesController` (`index` paginated, `show`, `create` via `CreateService`, `update`; `details` keys renamed to request fields); jbuilder summary and detail views (no email or salary in the list; `current_salary` with `money()`); `resources :employees` without destroy. `Employee` validates an unparseable `hired_on`. Fixed `CreateService` error import (see 4.3 notes). 25 integration tests. API spec §6.3 and database design §12 (I12) updated | `bin/rails test` ×5 seeds: 164 runs, 560 assertions, 0 failures; RuboCop 97 files clean; Brakeman 0 warnings; live smoke on :3106; 10k-row query timings 9–32 ms | I12 salary-record route to verify in 4.4 |
 | 2026-09-29 | 4.4 | `SalaryRecordsController` nested under employees (`index` newest first, `show`, `create` via `ChangeService`, `update` via `CorrectionService`; scoped lookups; L16 error mapping incl. `salary_record_not_editable`); `_salary_record` partial (money, status, editable); routes without destroy. 19 integration tests (auth, no DELETE, unknown employee, history order and status, change closing periods, scheduled, 422 cases, currency scale, wrapper, ignored fields, corrections, historical 422, immutable dates, cross-employee 404, log redaction at info, production log level). Database design §12 I12 closed; architecture §7 log note. Phase 4 gate passed | `bin/rails test` ×5 seeds: 183 runs, 650 assertions, 0 failures; RuboCop 102 files clean; Brakeman 0 warnings; live smoke on :3107 (401, 401, 404) | Owner: decide the log follow-up (keep `RAILS_LOG_LEVEL=info`; optionally `prepared_statements: true`) |
+| 2026-09-29 | 5 (review) | Reviewed Phase 5 against requirements, API spec §8–§9, database design §7, architecture, ADRs, and the Phase 4 code. Recorded decisions M1–M18, assumptions, dependencies, and risks. Expanded 5.1–5.3 into concrete tasks. Key gaps found: `BaseController` forces JSON (so `.csv` would not work); the planned batched CSV (`find_each`) can't keep the report order; the distribution bucket formula can misplace edge values; a past `as_of` interacts with current-only attributes | Read-only inspection of concerns, controllers, models, queries, views, routes, `test_helper.rb`, `Gemfile.lock` (no `csv` entry; stdlib on 3.2), and the git index. No code written; no tests run | Owner: approve M1–M18; unstage the 31 root-level `AD` entries in the git index before committing |
+| 2026-09-29 | 5.1 | `app/queries/analytics/`: `Population` (shared filters, default `active`+`on_leave`, in-effect salary join, M2 `hired_on` rule), `Median` (window-function CTE, D21), `SummaryQuery`, `DistributionQuery` (exact comparison banding, empty bands, a single band when min = max), `BreakdownQuery` (fixed `by` column map, dimension and currency). 22 known-data tests in `test/queries/analytics/` plus a shared helper | `bin/rails test` ×5 seeds: 205 runs, 704 assertions, 0 failures; RuboCop 112 files clean; Brakeman 0 warnings; read-only timing and `EXPLAIN` on the 10k dev data (41–70 ms uncached) | Treated the request to implement 5.1 as approval of M1–M6, M17, M18. Owner: confirm M7–M16 before 5.2; API spec §8.2/§8.3 and design §7.3 wording (M2, M4) in 5.2 |
+| 2026-09-29 | 5.2 | `Api::AnalyticsFilters` concern (validated filters, `no_store`); `Analytics::Population#filters` echo; `Employee.matching(q)` scope extracted from `EmployeeSearchQuery` (M10); `SalaryReportQuery` (M9 sorts, preloads); `Api::V1::Analytics::{Summaries,Distributions,Breakdowns}Controller` and `Api::V1::Reports::SalariesController` with jbuilder views; routes under `analytics` and `reports`. 17 integration tests. API spec §8/§9, architecture §3, and database design §7.3 updated | `bin/rails test` ×5 seeds: 222 runs, 829 assertions, 0 failures; RuboCop 124 files clean; Brakeman 0 warnings; live smoke on :3108 (4 × `401` JSON) | Applied M7–M13 defaults; M11 meta written inline. Owner: confirm M14–M16 before 5.3 |
+| 2026-09-29 | 5.3 | CSV export on `GET /reports/salaries.csv`: `BaseController.allow_csv` (M14); report route constrained to `json|csv`; `SalaryReportCsv` in `app/exports/` (one query with `LIMIT cap + 1`, column allowlist, `money()` amounts, formula guard, UTF-8 BOM; M15, M16); controller `send_data` with the `as_of` filename, or `422 export_too_large`. 8 integration tests. Architecture §3/§4.4/§9, design §7.5, API spec §9.2, ADR 005 updated. Phase 5 gate passed | `bin/rails test` ×5 seeds: 230 runs, 886 assertions, 0 failures; RuboCop 126 files clean; Brakeman 0 warnings; live smoke on :3109 (`.csv` 401 JSON, `.xml` 404 JSON); dev-data export of 9,336 rows in about 300 ms | Applied M14–M16 defaults. Carried over to Phase 6: 10k timings from 5.1 and 5.3 (for 6.2); log-level decision (4.4); README health line (2.2); unstage the root-level `AD` entries in the git index |
 
 ## Current progress
 - **Phase 1** — Backend requirements and design — **Done (gate passed 2026-09-28)**
 - **Phase 2** — Repository and Rails foundation — **Done (gate passed 2026-09-28)**. 2.1, 2.2, 2.3 Done. Carried-over follow-ups: README health line; `db:prepare` (owner).
 - **Phase 3** — Domain models and persistence — **Done (gate passed 2026-09-28)**. 3.1, 3.2, 3.3 Done.
 - **Phase 4** — Employee and salary APIs — **Done (gate passed 2026-09-29)**. 4.1–4.4 Done.
-- **Next:** Phase 5 — Compensation analytics and report APIs (not yet reviewed)
-- **Overall status:** Phases 1–4 complete
+- **Phase 5** — Compensation analytics and report APIs — **Done (gate passed 2026-09-29)**. 5.1, 5.2, 5.3 Done.
+- **Next:** Phase 6 — Backend quality, performance, and regression (not yet reviewed)
+- **Overall status:** Phases 1–5 complete
 
 ## Future work
 Frontend phases will be added after the backend/API scope and implementation are complete or stable.

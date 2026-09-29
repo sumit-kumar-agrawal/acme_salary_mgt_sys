@@ -13,19 +13,11 @@ class EmployeeSearchQuery
     relation = relation.where(country_id: country_id) if country_id
     relation = relation.where(department_id: department_id) if department_id
     relation = relation.where(employment_status: employment_status) if employment_status
-    relation = search(relation, q) if q.present?
+    relation = relation.matching(q) if q.present?
     order(relation, *sort)
   end
 
   private
-
-  # Contains match; the utf8mb4_unicode_ci collation makes it case- and accent-insensitive.
-  # LIKE wildcards in the input are escaped, so "%" and "_" match literally.
-  def search(relation, q)
-    pattern = "%#{Employee.sanitize_sql_like(q)}%"
-    relation.where("employees.employee_number LIKE :pattern OR employees.first_name LIKE :pattern " \
-                   "OR employees.last_name LIKE :pattern", pattern: pattern)
-  end
 
   def order(relation, field, direction)
     raise ArgumentError, "unsortable field: #{field}" unless SORTABLE.include?(field)

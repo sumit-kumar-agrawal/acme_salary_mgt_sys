@@ -14,9 +14,18 @@ module Api
       # Request bodies must use the documented resource key (e.g. "employee"); no automatic wrapping.
       wrap_parameters false
 
+      # Actions that may answer .csv (BACKEND_PLAN.md M14); every other request is forced to JSON.
+      class_attribute :csv_actions, instance_accessor: false, default: [].freeze
+
+      def self.allow_csv(*actions)
+        self.csv_actions = actions.map(&:to_s).freeze
+      end
+
       private
 
       def force_json_format
+        return if request.format.csv? && self.class.csv_actions.include?(action_name)
+
         request.format = :json
       end
     end
