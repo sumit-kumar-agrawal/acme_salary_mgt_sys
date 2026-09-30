@@ -1,0 +1,75 @@
+/* Public landing page (HomeController#show). Light and dark themes follow the system setting. */
+:root {
+  --home-bg: #f6f7f9;
+  --home-surface: #ffffff;
+  --home-text: #1c2430;
+  --home-muted: #5a6473;
+  --home-border: #dde1e7;
+  --home-accent: #0b5ed7;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --home-bg: #12161c;
+    --home-surface: #1b2129;
+    --home-text: #e7ebf0;
+    --home-muted: #a3adba;
+    --home-border: #2d3540;
+    --home-accent: #6ea8fe;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--home-bg);
+  color: var(--home-text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.55;
+}
+
+.home {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 48px 16px 32px;
+}
+
+.home h1 { font-size: clamp(1.75rem, 4vw, 2.5rem); margin: 0 0 12px; }
+.home h2 { font-size: 1.25rem; margin: 40px 0 16px; }
+.home h3 { font-size: 1.05rem; margin: 0 0 6px; }
+.home p { margin: 0 0 8px; }
+
+.home__eyebrow {
+  color: var(--home-accent);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+}
+
+.home__lead { color: var(--home-muted); font-size: 1.1rem; max-width: 65ch; }
+
+.home__cards {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.home__card,
+.home__access {
+  background: var(--home-surface);
+  border: 1px solid var(--home-border);
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.home__card p { color: var(--home-muted); font-size: 0.95rem; }
+
+.home__access { margin-top: 40px; }
+.home__access h2 { margin-top: 0; }
+.home__meta { color: var(--home-muted); font-size: 0.9rem; }
+.home a { color: var(--home-accent); }
+
+.home__footer { margin-top: 32px; color: var(--home-muted); font-size: 0.85rem; }
