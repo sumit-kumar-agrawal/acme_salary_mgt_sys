@@ -6,11 +6,13 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import Alert from "react-bootstrap/Alert";
+import Badge from "react-bootstrap/Badge";
 import Button from "react-bootstrap/Button";
 import Form from "react-bootstrap/Form";
 import DataTable, { type Column } from "@/components/common/DataTable";
 import ErrorAlert from "@/components/common/ErrorAlert";
 import Pagination from "@/components/common/Pagination";
+import SectionCard from "@/components/common/SectionCard";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { isApiError, type ApiDownload } from "@/services/api";
 import type { BulkUpload } from "@/services/bulkUpload.types";
@@ -80,9 +82,29 @@ export default function BulkSalaryCorrectionsPage() {
       cell: (row) => row.original_filename,
     },
     {
+      key: "uploaded",
+      header: "Uploaded on (UTC)",
+      cell: (row) => (
+        <span className="text-nowrap">{row.created_at.slice(0, 10)}</span>
+      ),
+    },
+    {
       key: "status",
       header: "Status",
-      cell: (row) => STATUS_LABELS[row.status],
+      cell: (row) => (
+        <Badge
+          bg={
+            row.status === "completed"
+              ? "success"
+              : row.status === "process"
+                ? "secondary"
+                : "warning"
+          }
+          text={row.status === "completed_with_errors" ? "dark" : undefined}
+        >
+          {STATUS_LABELS[row.status]}
+        </Badge>
+      ),
     },
     {
       key: "response",
@@ -94,6 +116,7 @@ export default function BulkSalaryCorrectionsPage() {
         return path ? (
           <a
             href={path}
+            className="btn btn-outline-primary btn-sm text-nowrap"
             onClick={(event) => {
               event.preventDefault();
               if (!download.isPending) download.mutate(path);
@@ -118,93 +141,109 @@ export default function BulkSalaryCorrectionsPage() {
 
   return (
     <>
-      <h1>Bulk salary corrections</h1>
-      <p>
-        Upload a CSV or XLSX file to correct current or scheduled salaries.
-        Download the response CSV to review rows with errors.
+      <h1 className="h3 mb-1">Bulk salary corrections</h1>
+      <p className="text-body-secondary mb-3">
+        Correct existing salaries or create new scheduled salaries from a CSV or
+        XLSX file.
       </p>
-      <Button
-        variant="outline-primary"
-        className="mb-3"
-        disabled={download.isPending}
-        onClick={() => download.mutate(null)}
+      <SectionCard
+        title="Upload salary file"
+        actions={
+          <Button
+            variant="outline-dark"
+            size="sm"
+            disabled={download.isPending}
+            onClick={() => download.mutate(null)}
+          >
+            Download template
+          </Button>
+        }
       >
-        Download template
-      </Button>
-      <Form
-        noValidate
-        onSubmit={submit}
-        className="mb-4"
-        aria-label="Upload salary corrections"
-      >
-        <Form.Group controlId="bulk-salary-file" className="mb-3">
-          <Form.Label>Salary corrections file</Form.Label>
-          <Form.Control
-            ref={input}
-            type="file"
-            accept=".csv,.xlsx"
-            required
-            disabled={upload.isPending}
-            aria-describedby="bulk-file-help"
-            onChange={(event) => {
-              setFile((event.target as HTMLInputElement).files?.[0] ?? null);
-              upload.reset();
+        <p className="text-body-secondary small">
+          Start with the template. For new scheduled salaries, use future dates
+          after the latest salary record and list dates in ascending order per
+          employee.
+        </p>
+        <Form
+          noValidate
+          onSubmit={submit}
+          className="mb-3"
+          aria-label="Upload salary corrections"
+        >
+          <Form.Group controlId="bulk-salary-file" className="mb-3">
+            <Form.Label>Salary corrections file</Form.Label>
+            <Form.Control
+              ref={input}
+              type="file"
+              accept=".csv,.xlsx"
+              required
+              disabled={upload.isPending}
+              aria-describedby="bulk-file-help"
+              onChange={(event) => {
+                setFile((event.target as HTMLInputElement).files?.[0] ?? null);
+                upload.reset();
+              }}
+            />
+            <Form.Text id="bulk-file-help">
+              Maximum 2 MB and 2,000 rows. Amounts are monthly and must include
+              a currency code.
+            </Form.Text>
+          </Form.Group>
+          <Button type="submit" disabled={!file || upload.isPending}>
+            {upload.isPending ? "Processing…" : "Upload file"}
+          </Button>
+        </Form>
+        {upload.isError && <ErrorAlert error={upload.error} />}
+        {details && (
+          <ul aria-label="Header errors">
+            {Object.entries(details).map(([name, values]) => (
+              <li key={name}>
+                {name.replaceAll("_", " ")}: {values.join(", ")}
+              </li>
+            ))}
+          </ul>
+        )}
+        {upload.data && (
+          <Alert
+            role="status"
+            variant={
+              upload.data.data.status === "completed" ? "success" : "warning"
+            }
+          >
+            {STATUS_LABELS[upload.data.data.status]}
+            {upload.data.data.response_file_path &&
+              ". Download the response CSV from the history below."}
+          </Alert>
+        )}
+        {download.isError && <ErrorAlert error={download.error} />}
+      </SectionCard>
+      <SectionCard title="Upload history" className="mb-0">
+        <p className="small text-body-secondary">
+          Valid rows are saved even when other rows fail. Download the response
+          CSV, correct the error rows, and upload it again.
+        </p>
+        <DataTable
+          caption="Bulk salary correction uploads"
+          columns={columns}
+          rows={history.data?.data}
+          rowKey={(row) => row.id}
+          isLoading={history.isPending}
+          isFetching={history.isFetching}
+          error={history.error}
+          onRetry={() => void history.refetch()}
+          emptyMessage="No bulk uploads yet."
+        />
+        {history.data && (
+          <Pagination
+            meta={history.data.meta}
+            onPageChange={setPage}
+            onPerPageChange={(value) => {
+              setPerPage(value);
+              setPage(1);
             }}
           />
-          <Form.Text id="bulk-file-help">
-            Maximum 2 MB and 2,000 rows. Amounts are monthly and must include a
-            currency code.
-          </Form.Text>
-        </Form.Group>
-        <Button type="submit" disabled={!file || upload.isPending}>
-          {upload.isPending ? "Processing…" : "Upload file"}
-        </Button>
-      </Form>
-      {upload.isError && <ErrorAlert error={upload.error} />}
-      {details && (
-        <ul aria-label="Header errors">
-          {Object.entries(details).map(([name, values]) => (
-            <li key={name}>
-              {name.replaceAll("_", " ")}: {values.join(", ")}
-            </li>
-          ))}
-        </ul>
-      )}
-      {upload.data && (
-        <Alert
-          role="status"
-          variant={
-            upload.data.data.status === "completed" ? "success" : "warning"
-          }
-        >
-          {STATUS_LABELS[upload.data.data.status]}
-          {upload.data.data.response_file_path &&
-            ". Download the response CSV from the history below."}
-        </Alert>
-      )}
-      {download.isError && <ErrorAlert error={download.error} />}
-      <h2 className="h4">Upload history</h2>
-      <DataTable
-        caption="Bulk salary correction uploads"
-        columns={columns}
-        rows={history.data?.data}
-        rowKey={(row) => row.id}
-        isLoading={history.isPending}
-        isFetching={history.isFetching}
-        error={history.error}
-        onRetry={() => void history.refetch()}
-        emptyMessage="No bulk uploads yet."
-      />
-      {history.data && (
-        <Pagination
-          meta={history.data.meta}
-          onPageChange={setPage}
-          onPerPageChange={(value) => {
-            setPerPage(value);
-            setPage(1);
-          }}
-        />
-      )}
+        )}
+      </SectionCard>
     </>
   );
 }

@@ -1,3 +1,4 @@
+import Card from "react-bootstrap/Card";
 import Col from "react-bootstrap/Col";
 import Row from "react-bootstrap/Row";
 import EmptyState from "@/components/common/EmptyState";
@@ -36,11 +37,18 @@ export default function SalaryDistribution({
   return (
     <div aria-busy={distribution.isFetching || undefined}>
       <p className="text-body-secondary small">
-        Monthly amounts in ten equal bands per currency. Each band includes its
-        lower value and excludes its upper value, except the last, which
-        includes both. Bars are scaled within each currency.
+        Employee counts by monthly salary band. Bars use a separate scale for
+        each currency.
       </p>
-      <Row xs={1} lg={2} className="g-4">
+      <details className="small text-body-secondary mb-3">
+        <summary>How to read the bands</summary>
+        <p className="mt-2 mb-0">
+          Monthly amounts are divided into ten equal bands per currency, or one
+          band when all amounts are equal. Each band includes its lower value
+          and excludes its upper value; the final band includes both.
+        </p>
+      </details>
+      <Row xs={1} xl={2} className="g-3">
         {currencies.map((currency) => (
           <Col key={currency.currency_code}>
             <CurrencyBands currency={currency} />
@@ -54,20 +62,36 @@ export default function SalaryDistribution({
 function CurrencyBands({ currency }: { currency: CurrencyDistribution }) {
   const code = currency.currency_code;
   return (
-    <section aria-labelledby={`distribution-${code}`}>
-      <h3 id={`distribution-${code}`} className="h6">
-        {code}: {formatEmployeeCount(currency.employee_count)}
-      </h3>
-      <CountBars
-        caption={`${code} salary distribution`}
-        labelHeader="Monthly amount"
-        rows={currency.bands.map((band, index) => ({
-          // Keyed by position: rounded edges can repeat when a currency's range is tiny.
-          key: String(index),
-          label: `${formatMoney(band.lower)}–${formatMoney(band.upper)} ${code}`,
-          count: band.count,
-        }))}
-      />
-    </section>
+    <Card
+      as="section"
+      aria-labelledby={`distribution-${code}`}
+      className="h-100"
+    >
+      <Card.Header className="bg-body-tertiary">
+        <h3 id={`distribution-${code}`} className="h6 mb-0">
+          {code}:{" "}
+          <span className="fw-normal">
+            {formatEmployeeCount(currency.employee_count)}
+          </span>
+        </h3>
+      </Card.Header>
+      <Card.Body>
+        <p className="small text-body-secondary mb-3">
+          {currency.bands.length === 1
+            ? "One monthly salary band"
+            : `${currency.bands.length} monthly salary bands`}
+        </p>
+        <CountBars
+          caption={`${code} salary distribution`}
+          labelHeader="Monthly amount"
+          rows={currency.bands.map((band, index) => ({
+            // Keyed by position: rounded edges can repeat when a currency's range is tiny.
+            key: String(index),
+            label: `${formatMoney(band.lower)}–${formatMoney(band.upper)} ${code}`,
+            count: band.count,
+          }))}
+        />
+      </Card.Body>
+    </Card>
   );
 }

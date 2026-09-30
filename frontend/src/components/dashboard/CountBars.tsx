@@ -52,14 +52,18 @@ export default function CountBars({
                   {formatCount(row.count)}
                 </span>
                 <div
-                  className="bg-primary rounded"
-                  data-testid="count-bar"
+                  className="flex-grow-1 bg-body-tertiary rounded"
                   aria-hidden="true"
-                  style={{
-                    height: "0.75rem",
-                    width: `${largest > 0 ? (row.count / largest) * 100 : 0}%`,
-                  }}
-                />
+                >
+                  <div
+                    className="bg-primary rounded"
+                    data-testid="count-bar"
+                    style={{
+                      height: "0.75rem",
+                      width: `${largest > 0 ? (row.count / largest) * 100 : 0}%`,
+                    }}
+                  />
+                </div>
               </div>
             </td>
             {detailHeader && <td className="text-nowrap">{row.detail}</td>}
