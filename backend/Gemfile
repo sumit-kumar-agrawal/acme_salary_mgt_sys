@@ -33,6 +33,12 @@ gem "solid_queue"
 gem "dotenv-rails"
 gem "pagy", "~> 43.0"
 
+# Bulk salary correction uploads: CSV and XLSX read/write (BulkUploadService).
+# csv leaves Ruby's default gems in 3.4, so it is listed explicitly.
+gem "csv", "~> 3.2"
+gem "roo", "~> 3.0"
+gem "caxlsx", "~> 4.5"
+
 # Reduces boot times through caching; required in config/boot.rb
 gem "bootsnap", require: false
 

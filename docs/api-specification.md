@@ -1,7 +1,7 @@
 # Salary Management System — API Specification
 
-**Status:** Implemented through Phase 6 (2026-09-29); the contract for the frontend. Changes since v2.0 are listed in §14  
-**Version:** 2.1 (2026-09-29)  
+**Status:** Implemented through Phase 6 (2026-09-29), plus bulk salary correction (§9A, 2026-09-30); the contract for the frontend. Changes since v2.0 are listed in §14\
+**Version:** 2.6 (2026-09-30)\
 **Base path:** `/api/v1`
 
 Decision IDs (Dn, In, O1) refer to `BACKEND_PLAN.md` Phase 1 findings and `docs/database-design.md`. Architecture context is in `docs/architecture.md`, and authentication is covered by ADR 004.
@@ -10,7 +10,7 @@ Decision IDs (Dn, In, O1) refer to `BACKEND_PLAN.md` Phase 1 findings and `docs/
 
 | Topic | Rule |
 |---|---|
-| Format | JSON request and response bodies (`Content-Type: application/json`). The CSV export is the only exception. |
+| Format | JSON request and response bodies (`Content-Type: application/json`). Exceptions: the CSV export (§9.2), and the bulk correction upload (`multipart/form-data`) and its file downloads (§9A). |
 | Authentication | Session cookie (ADR 004). Every endpoint requires login except `GET /health`, `GET /session`, and `POST /session`. |
 | CSRF | Every `POST`, `PATCH`, and `DELETE` must send the `X-CSRF-Token` header, using the token from `GET /session` or from the login response. |
 | Dates | ISO 8601 `YYYY-MM-DD`. "Today" is the current date in UTC (D9). |
@@ -41,7 +41,7 @@ Decision IDs (Dn, In, O1) refer to `BACKEND_PLAN.md` Phase 1 findings and `docs/
 }
 ```
 
-`details` appears only for `validation_failed` and `bad_request`. It maps parameter or attribute names to messages and never includes submitted values.
+`details` appears only for `validation_failed`, `bad_request`, and `invalid_file_header` (§9A.3). It maps parameter or attribute names to messages and never includes submitted values.
 
 ### 2.3 Pagination
 
@@ -474,12 +474,179 @@ The CSV takes the same parameters, except `page` and `per_page`, which are ignor
 - **Errors:** `400`, `401`, and `422` return the JSON error envelope, not a CSV.
 - **Formats:** only `/reports/salaries` accepts `.csv`. Other extensions (e.g. `.xml`) return `404`; analytics endpoints always answer JSON.
 
+## 9A. Bulk salary correction
+
+Corrects existing salary records or creates new scheduled salaries from one CSV or Excel (`.xlsx`) upload. An existing employee/date pair follows the single correction rules (§7.5): only `amount` and `currency_code` change, dates never change, and historical records cannot be corrected. A missing pair creates a scheduled salary using the salary change rules (§7.3), with an additional requirement that the start date be after today (UTC). The date must also be after the employee’s latest salary start date. The previous period is closed on the day before the new start; its amount and currency are preserved. Status `scheduled` is derived from the future effective date, as for other salary records (§7.1). Every upload is kept as a history record with the original file and, when rows fail, a file of the failed rows.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/bulk_salary_corrections/template` | Download an empty template (header row only) |
+| `POST` | `/bulk_salary_corrections` | Upload a file and process it |
+| `GET` | `/bulk_salary_corrections` | Upload history, paginated, newest first |
+| `GET` | `/bulk_salary_corrections/:id` | One upload |
+| `GET` | `/bulk_salary_corrections/:id/original_file` | Download the uploaded file |
+| `GET` | `/bulk_salary_corrections/:id/response_file` | Download the failed rows (`404` when no failed-rows attachment exists) |
+
+All endpoints require sign-in. The upload is a `POST`, so it needs `X-CSRF-Token` (§1).
+
+### 9A.1 Workflow
+
+1. **Get the template.** `GET /bulk_salary_corrections/template` (CSV) or `?file_format=xlsx`.
+2. **Fill in one row per salary record to correct.** Use an existing employee number and `effective_from` date to correct a record, or a new future date to schedule a salary. Provide the `amount` and `currency_code`. List multiple new dates for one employee in ascending order; rows are processed in file order.
+3. **Upload the file** with `POST /bulk_salary_corrections`.
+4. **Read the result.** The response gives the status and download paths. Valid rows are saved even when other rows fail.
+5. **Fix failed rows, if a download is available.** Download `response_file_path`, correct the rows using its `errors` column, and upload that same file again. It holds only the failed rows, so rows that were already saved are not applied twice.
+
+### 9A.2 File format
+
+| Rule | Detail |
+|---|---|
+| File types | `.csv` (UTF-8; a byte-order mark is allowed) or `.xlsx`. Legacy `.xls` is not accepted. The extension must match the content. |
+| Size | At most 2 MB and 2,000 data rows. An `.xlsx` file must also unpack to at most 50 MB. |
+| Worksheet | Only the first sheet of an `.xlsx` file is read. |
+| Header row | The first non-blank row. It must contain exactly these columns, in any order: `employee_number`, `effective_from`, `amount`, `currency_code`. Names are matched ignoring case, with spaces or hyphens read as underscores (`Employee Number` is accepted). The `row_number` and `errors` columns of a response CSV are ignored. Any other column is rejected. |
+| Blank rows | Skipped. |
+| Row numbers | Counted as a spreadsheet shows them: the header is row 1. |
+
+Column values (all required):
+
+| Column | Rule |
+|---|---|
+| `employee_number` | An existing employee. Case and surrounding spaces are ignored. |
+| `effective_from` | `YYYY-MM-DD`, or a date cell in `.xlsx`. If a salary exists on this date, it must be `current` or `scheduled`. Otherwise the date must be after today and after the latest salary start date. It must not precede the employee’s hire date. |
+| `amount` | Monthly amount (D3). Digits with an optional decimal point, e.g. `85000.00`; no thousands separators or currency symbols. Greater than 0, with no more decimal places than the currency allows (JPY 0, KWD 3). |
+| `currency_code` | A supported currency (`GET /currencies`). Case is ignored. |
+
+Example CSV:
+
+```csv
+employee_number,effective_from,amount,currency_code
+EMP-00123,2026-04-01,86000.00,INR
+EMP-00456,2027-01-01,5200.00,USD
+```
+
+### 9A.3 `POST /bulk_salary_corrections`
+
+Send `multipart/form-data` with the file in a part named `file`. Let the client set the multipart `Content-Type` header (with its boundary).
+
+```bash
+curl -b cookies.txt -H "X-CSRF-Token: $TOKEN" \
+  -F "file=@june-corrections.xlsx" http://localhost:3000/api/v1/bulk_salary_corrections
+```
+
+```ts
+const body = new FormData();
+body.append("file", fileInput.files[0]);
+await fetch("/api/v1/bulk_salary_corrections", {
+  method: "POST",
+  credentials: "same-origin",
+  headers: { "X-CSRF-Token": csrfToken }, // do not set Content-Type
+  body,
+});
+```
+
+Processing happens in two stages.
+
+**Stage 1: file and header.** If the file cannot be read or its header does not match, the upload is rejected with `422` before any row is processed. Nothing is saved and no history record is created.
+
+```json
+{
+  "error": {
+    "code": "invalid_file_header",
+    "message": "The file header does not match the template.",
+    "details": {
+      "missing_columns": ["effective_from"],
+      "unknown_columns": ["salary"],
+      "duplicate_columns": ["amount"]
+    }
+  }
+}
+```
+
+`details` includes only the lists that are not empty. A blank header cell between columns is reported as `"(blank)"` in `unknown_columns`.
+
+| `code` | `message` |
+|---|---|
+| `invalid_file` | `Upload a .csv or .xlsx file.` |
+| `invalid_file` | `The file must be at most 2 MB.` |
+| `invalid_file` | `The file is not a valid .xlsx file.` or `The .xlsx file is too large once unpacked.` |
+| `invalid_file` | `The CSV file must be UTF-8 text.` or `The CSV file could not be read.` |
+| `invalid_file` | `The file is empty.` or `The file has no data rows.` |
+| `invalid_file` | `The file has more than 2,000 data rows.` |
+| `invalid_file_header` | `The file header does not match the template.` (with `details` as above) |
+
+**Stage 2: rows.** A history record is created with `process` status. Each valid row is saved in its own transaction; errors in one row do not stop the others. Rows targeting the same employee number and effective date all fail. Required-value and duplicate-target failures skip business processing. Existing pairs use the salary correction service, which reloads under its employee lock and rechecks editability and validations. New future dates use the salary change service, which locks the employee, reloads the latest salary, and atomically closes its period and creates the scheduled record. Failed creation leaves the previous period unchanged. Rows are processed in file order; later rows see salary history written by earlier rows when the change service validates the latest record. Unchanged values succeed without changing the record timestamp.
+
+The response is `201`, **even when some or all rows failed**. No row counts are stored or returned:
+
+```json
+{
+  "data": {
+    "id": 42,
+    "status": "completed_with_errors",
+    "file_format": "xlsx",
+    "original_filename": "june-corrections.xlsx",
+    "original_file_path": "/api/v1/bulk_salary_corrections/42/original_file",
+    "response_file_path": "/api/v1/bulk_salary_corrections/42/response_file",
+    "started_at": "2026-09-30T10:15:00.000Z",
+    "finished_at": "2026-09-30T10:15:02.000Z",
+    "created_at": "2026-09-30T10:15:00.000Z"
+  }
+}
+```
+
+- `process`: processing the upload. The frontend displays **Processing**.
+- `completed`: no rows failed; `response_file_path` is `null`.
+- `completed_with_errors`: at least one row failed, including when every row failed. Download the response CSV when its path is present.
+
+Files are Active Storage attachments (`original_file` and `response_file`), linked through `active_storage_attachments` and `active_storage_blobs`. There is no file-path column on `bulk_salary_corrections`. JSON never contains submitted row values or amounts.
+
+An unexpected exception after history creation returns generic `500 internal_error`. Recovery attempts to mark `completed_with_errors` and attach a CSV containing known error rows and unconfirmed rows with `Processing stopped. Review current records before retrying this row.` Already committed corrections remain saved. A storage failure can prevent the attachment, so download paths reflect actual attachment presence. A process crash or database outage can leave `process`. Inspect history and current records before retrying; no automatic retry is provided.
+
+Other responses: `400 bad_request` when `file` is missing (`details.file: ["is required"]`) or is not a file (`["must be an uploaded file"]`), `401`, and `422 invalid_csrf_token`.
+
+### 9A.4 Response file
+
+`GET /bulk_salary_corrections/:id/response_file` returns a CSV attachment (`<original name>-response.csv`, `Content-Type: text/csv`), even when the uploaded file was XLSX. It contains only error rows, with:
+
+- the four template columns, holding the original values before mapper normalization (for example, lowercase employee numbers remain lowercase);
+- `row_number`: the row's number in the original file;
+- `errors`: every problem in the row, as `column: message`, separated by `; `.
+
+Messages never repeat the submitted value:
+
+| Message | Cause |
+|---|---|
+| `<column>: is required` | Empty cell (other checks are skipped for that row) |
+| `employee_number: no employee has this number` | Unknown employee |
+| `effective_from: must be a date in YYYY-MM-DD format` | Unparseable date |
+| `effective_from: a new salary record must start in the future` | No matching record and the date is today or earlier |
+| `effective_from: must be after the latest salary record's start date` | New date is not after the latest record, including one created earlier in the upload |
+| `effective_from: must not be before the employee's hire date` | New salary starts before hire |
+| `effective_from: historical salary records cannot be changed` | The record has ended |
+| `amount: must be a number greater than 0 without separators, e.g. 85000.00` | Not a positive plain number |
+| `amount: must have at most N decimal places for this currency` | Too many decimals (I5) |
+| `amount: is too large` | 10^14 or more |
+| `currency_code: is not a supported currency` | Unknown currency |
+| `The same salary record also appears in row N` (or `rows N, M`) | Duplicate target in the file; business processing is skipped |
+| `Historical salary records cannot be changed` | The record became historical between checking and saving |
+
+Cells starting with `=`, `+`, `-`, `@`, a tab, or a carriage return are prefixed with `'`, as in §9.2. Remove the prefix when correcting such a cell. A CSV file starts with a UTF-8 byte-order mark.
+
+### 9A.5 History and downloads
+
+- `GET /bulk_salary_corrections` returns the records above, paginated (§2.3), newest first. It has no filters or sorting.
+- `GET /bulk_salary_corrections/:id` returns one record (`404` if unknown).
+- `GET /bulk_salary_corrections/:id/original_file` returns the file exactly as uploaded.
+- Both file downloads are attachments (`Content-Disposition: attachment`) marked `Cache-Control: no-store`, because they contain salary amounts. They are served only through these authenticated endpoints; there are no public file URLs.
+- `GET /bulk_salary_corrections/template?file_format=csv|xlsx` (default `csv`) returns `salary-corrections-template.<format>`. Any other `file_format` returns `400`.
+
 ## 10. Status and error codes
 
 | Status | `code` | When |
 |---|---|---|
 | 200 | — | Successful read, update, or login |
-| 201 | — | Employee or salary record created |
+| 201 | — | Employee or salary record created; bulk correction upload processed (even if rows failed, §9A.3) |
 | 204 | — | Logout |
 | 400 | `bad_request` | Missing wrapper key; invalid filter, sort, pagination, `by`, or date parameter; unknown filter ID |
 | 401 | `unauthenticated` | No session or expired session |
@@ -489,6 +656,8 @@ The CSV takes the same parameters, except `page` and `per_page`, which are ignor
 | 422 | `validation_failed` | Field validation failure, including a date field sent to a correction, or a duplicate `employee_number`/`email` caught by the database after a concurrent request |
 | 422 | `salary_record_not_editable` | Correction attempted on a historical record |
 | 422 | `export_too_large` | CSV would exceed 10,000 rows |
+| 422 | `invalid_file` | Bulk upload cannot be read: wrong type, too large, too many rows, or no data (§9A.3) |
+| 422 | `invalid_file_header` | Bulk upload header does not match the template; `details` lists the columns (§9A.3) |
 | 422 | `invalid_csrf_token` | CSRF token missing or wrong on a state-changing request |
 | 429 | `rate_limited` | Login attempts exceeded |
 | 500 | `internal_error` | Unexpected error. Generic message; details are logged only. |
@@ -507,10 +676,12 @@ The CSV takes the same parameters, except `page` and `per_page`, which are ignor
 | GET, PATCH | `/employees/:employee_id/salary_records/:id` | required | 4.4 |
 | GET | `/analytics/summary`, `/analytics/distribution`, `/analytics/breakdown` | required | 5.2 |
 | GET | `/reports/salaries`, `/reports/salaries.csv` | required | 5.2, 5.3 |
+| GET, POST | `/bulk_salary_corrections` | required | bulk (§9A) |
+| GET | `/bulk_salary_corrections/:id`, `/:id/original_file`, `/:id/response_file`, `/template` | required | bulk (§9A) |
 
 `PUT` is accepted as an alias of `PATCH` on `/employees/:id` and `/employees/:employee_id/salary_records/:id` (Rails resource routing) and behaves identically. Clients should use `PATCH`.
 
-No payroll, tax, disbursement, integration, or bulk-import endpoints exist.
+No payroll, tax, disbursement, or integration endpoints exist. Bulk salary correction (§9A) is the only bulk endpoint.
 
 ## 12. Integration test expectations (Minitest)
 
@@ -525,6 +696,7 @@ No payroll, tax, disbursement, integration, or bulk-import endpoints exist.
   - A salary record of another employee returns `404`.
 - **Analytics:** per-currency totals are correct on known data; no cross-currency total appears; median is correct for odd and even counts; `as_of` handling; terminated employees are excluded by default; band edges and counts; breakdown is keyed by dimension and currency; `by` is validated.
 - **Reports:** JSON and CSV return the same rows for the same filters; CSV columns follow the allowlist; formula cells are escaped; a result over 10,000 rows returns `422`; unauthenticated CSV requests return a JSON `401`.
+- **Bulk correction:** only the three documented statuses and no row counters; CSV and XLSX input, including scheduled creation and corrections in the same upload; new dates must be future dates after the latest record, hire-date and currency validations are preserved, failed creation leaves history unchanged; invalid file/header returns `422` without history; valid rows persist when others fail; duplicate targets, historical records, and unknown employees fail safely; response CSV contains only error rows and can be uploaded again; employee-module reuse is covered by a service test; unexpected exceptions return generic `500` and attempt error-file recovery; attachment-aware downloads are authenticated, `no-store`, and `404` when missing; paginated history avoids N+1 attachment queries.
 - **Privacy:** error bodies contain no submitted values; salary fields are filtered from logs.
 
 ## 13. Client integration notes (frontend)
@@ -551,7 +723,7 @@ A summary for client developers. The sections above are the contract.
 - `details` appears for `validation_failed` and `bad_request`. It maps request field names (e.g. `employee_number`, `initial_salary.amount`, `country_id`) to messages, so errors can be shown next to form fields. Submitted values are never echoed.
 - Codes a client should handle:
   - `401 unauthenticated`, `401 invalid_credentials`;
-  - `422 validation_failed`, `salary_record_not_editable`, `export_too_large`, `invalid_csrf_token`;
+  - `422 validation_failed`, `salary_record_not_editable`, `export_too_large`, `invalid_file`, `invalid_file_header`, `invalid_csrf_token`;
   - `429 rate_limited`;
   - `400 bad_request` (a client bug or a bad filter);
   - `404 not_found`;
@@ -571,7 +743,25 @@ A summary for client developers. The sections above are the contract.
 - Link or navigate to `GET /reports/salaries.csv?<same filters as the JSON report>`. The response is an attachment (`salary-report-<as_of>.csv`, UTF-8 with a BOM).
 - If the result would exceed 10,000 rows, the response is **JSON** `422 export_too_large`. Check the status or content type before treating the response as a file.
 
+**Bulk salary correction**
+- Upload with `FormData` (field `file`) and `X-CSRF-Token`; let the browser set multipart `Content-Type` (§9A.3).
+- On `201`, display Processing, Completed, or Completed with errors using `status`. Offer `response_file_path` when present. There are no row counters.
+- Response downloads are always CSV; `file_format` describes the original upload.
+- On `422 invalid_file_header`, show the nonempty missing, unknown, and duplicate column lists; nothing was saved.
+- On `500`, inspect history and current records before retrying; corrections already committed remain saved, and a response file may be unavailable.
+- Use returned download paths.
+
 ## 14. Changelog
+
+- **2.6 (2026-09-30), scheduled salaries through bulk uploads:** a missing employee/date salary pair now creates a future scheduled record through `Salaries::ChangeService`; existing records still use correction rules. Previous salary periods are closed transactionally, dates must follow the latest salary, and row errors remain in the response CSV. The endpoint and template columns are unchanged.
+
+- **2.5 (2026-09-30), simplified bulk uploads:** removed stored and computed row counters; statuses are `process`, `completed`, and `completed_with_errors`; renamed the error attachment and endpoint to `response_file`; parsing, headers, mapping, and row processing now live in `BulkUploadService`. Added a frontend upload/history page with response CSV downloads. Existing attachment metadata is migrated without moving files.
+
+- **2.4 (2026-09-30), mapper-based bulk uploads:** module services declare required/optional headers and a proc mapper; salary processing moved to `Salaries::BulkCorrectionService`. Added computed `success_count`/`failed_count`, and changed failed-row downloads to CSV for every upload format (§9A). Original uploads and template formats remain available. Extension instructions are in `backend/README.md`.
+
+- **2.3 (2026-09-30), reusable bulk processing:** added `created_rows` (always zero for salary corrections) and `interrupted` history status; clarified partial counts, attachment-aware download paths, unexpected-error recovery, duplicate short-circuiting, and locked unchanged detection (§9A). The internal definition contract and extension steps are documented in `backend/README.md`; no additional bulk endpoints were introduced.
+
+- **2.2 (2026-09-30), bulk salary correction:** new §9A (template, upload, history, and file downloads); `invalid_file` and `invalid_file_header` codes (§10); endpoint summary (§11), test expectations (§12), and client notes (§13) updated.
 
 - **2.1 (2026-09-29), Phases 4–7 clarifications:**
   - `details` keys use request field names (§6.3);

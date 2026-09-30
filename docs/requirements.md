@@ -1,8 +1,8 @@
 # Salary Management System — Requirements
 
 **Document type:** Product and scope requirements  
-**Status:** Approved baseline; backend implemented and tested through Phase 6 (2026-09-29)  
-**Version:** 1.2  
+**Status:** Approved baseline; backend implemented and tested through Phase 6 (2026-09-29); bulk salary correction (FR-08) added 2026-09-30  
+**Version:** 1.3  
 **Source of truth:** This document together with `requirements.docx`. Decision IDs (D1–D27, C1–C7) refer to `BACKEND_PLAN.md` Phase 1 findings.
 
 ## 1. Business objective
@@ -12,7 +12,7 @@ Replace Excel-based salary tracking with a web application that enables HR to ma
 ## 2. Users and scope
 
 - **Primary user:** One HR Manager.
-- **In scope:** Employee records, salary records and history, search/filtering, salary analytics, and filtered report export.
+- **In scope:** Employee records, salary records and history, bulk salary correction from a CSV or Excel upload (FR-08), search/filtering, salary analytics, and filtered report export.
 - **Data scale:** Approximately 10,000 employees as the target dataset. This is not a stated concurrent-user requirement.
 
 ## 3. Functional requirements
@@ -44,6 +44,18 @@ The HR Manager can produce filtered reports and export the resulting data in a p
 ### FR-07 — Authentication and access
 
 The application provides authentication and server-side authorization appropriate for the single HR Manager role. Advanced role administration is not required for the assessment.
+
+### FR-08 — Bulk salary correction (added 2026-09-30, §9)
+
+The HR Manager can upload a CSV or Excel (`.xlsx`) file to correct many salary records at once, and to schedule future salaries, instead of changing them one by one.
+
+- A downloadable template defines the columns: `employee_number`, `effective_from`, `amount`, `currency_code`.
+- The file and its header row are checked before any row is processed. A file that cannot be read or whose header does not match is rejected, and nothing is saved.
+- A row whose employee and `effective_from` match an existing current or scheduled record corrects its amount and currency (FR-02). A row with a new future date schedules a salary and closes the previous period (FR-03). Historical records cannot be changed.
+- Each row is validated and saved on its own. Valid rows are saved even when other rows fail.
+- Failed rows are returned in a downloadable response file with the reason for each row. HR can fix that file and upload it again.
+- Every upload is kept in a history with its status and original file.
+- Responses and error messages never repeat submitted salary values; the files are available only to the signed-in HR Manager.
 
 ## 4. Non-functional requirements
 
@@ -88,11 +100,17 @@ The application provides authentication and server-side authorization appropriat
 
 ## 8. Acceptance summary
 
-The solution is acceptable when an authenticated HR Manager can manage and search employee records, maintain salary records with history, view currency-safe compensation analytics, and export filtered reports; core flows are tested and demonstrated against approximately 10,000 synthetic employee records.
+The solution is acceptable when an authenticated HR Manager can manage and search employee records, maintain salary records with history, correct salaries in bulk from a file upload, view currency-safe compensation analytics, and export filtered reports; core flows are tested and demonstrated against approximately 10,000 synthetic employee records.
 
 ## 9. Scope change control
 
 Any feature outside this document should be treated as a scope change: record the business reason, impact, and revised acceptance criteria before implementation.
+
+Recorded scope changes:
+
+| ID | Change | Business reason | Impact | Acceptance | Approved |
+|---|---|---|---|---|---|
+| SC-01 | Bulk salary correction from a CSV or `.xlsx` upload (FR-08) | Correcting many salaries one at a time through the single-record form is slow and error-prone | New endpoints (API spec §9A), a `bulk_salary_corrections` history table, Active Storage for the files, and the `csv`, `roo`, and `caxlsx` gems (ADR 005); a frontend upload and history page | FR-08; tests listed in §11 | Owner, 2026-09-30 |
 
 ## 10. Approved decisions affecting requirements
 
@@ -114,6 +132,7 @@ Full rationale for each decision is in `BACKEND_PLAN.md` (Phase 1 findings).
 | Reports and export | CSV export is in scope. A paginated JSON report and its CSV export share the same filters. The CSV is capped at 10,000 rows: a larger result returns an error asking the user to narrow the filters, and nothing is silently truncated. CSV output is protected against formula injection. | C6, D19, D24 |
 | Analytics | Per currency: total, average, median, and distribution bands. Also a country and department breakdown. Filters: country, department, status, and as-of date. | D20–D22 |
 | Listings | Default page size 25, maximum 100. Sorting only on allowlisted fields. | D23 |
+| Bulk salary correction | CSV or `.xlsx`, at most 2 MB and 2,000 rows, processed during the request (no background jobs). Header checked before any row. Existing records are corrected; new future dates are scheduled. Rows are saved individually; failed rows go to a response CSV. Statuses: `process`, `completed`, `completed_with_errors`. No row counts are stored. | SC-01, BACKEND_PLAN.md Phase 8 |
 
 ## 11. Backend traceability
 
@@ -128,10 +147,11 @@ The phase column refers to `BACKEND_PLAN.md`. Endpoint paths are relative to `/a
 | FR-05 Compensation analytics | Per-currency monthly total, average, median, min/max, distribution; country and department breakdown | `GET /analytics/summary`, `GET /analytics/distribution`, `GET /analytics/breakdown` | `queries/analytics/*_test.rb` (known data: per-currency figures, odd and even medians, `as_of`, terminated excluded, band edges, dimension × currency), `int/analytics_test.rb` | 5.1, 5.2 |
 | FR-06 Reports and export | Filtered salary report as JSON and CSV | `GET /reports/salaries`, `GET /reports/salaries.csv` | `int/salary_report_test.rb`, `int/salary_report_csv_test.rb` (CSV = JSON pages, column allowlist, formula guard, cap `422`, JSON errors) | 5.2, 5.3 |
 | FR-07 Authentication and access | Single HR login; default-deny protection on every endpoint | `GET/POST/DELETE /session` | `int/sessions_test.rb` (login, generic failure, expiry, `429`, cookie flags, CSRF), `int/route_protection_test.rb` (every route `401`; CSRF on every write), `models/user_test.rb`, `lib/tasks/hr_rake_test.rb` | 4.1, 6.1 |
+| FR-08 Bulk salary correction | Template download; CSV/XLSX upload with header check; per-row correction or scheduled salary through the salary services; response CSV of failed rows; upload history with original and response files | `GET /bulk_salary_corrections/template`, `GET/POST /bulk_salary_corrections`, `GET /bulk_salary_corrections/:id`, `GET /bulk_salary_corrections/:id/original_file`, `GET /bulk_salary_corrections/:id/response_file` | `services/bulk_upload_service_test.rb` (file and header rejection without history, corrections, scheduled creation, duplicates, historical records, formula guard, stale-data rechecks, reuse by another module), `models/bulk_salary_correction_test.rb`, `int/bulk_salary_corrections_test.rb` (auth, `201`/`422`/`400`, re-upload of the response CSV, `no-store` downloads, `404`s, pagination and N+1, generic `500` recovery) | 8 |
 | NFR Performance | Pagination, indexes, efficient aggregates at about 10k employees | — | N+1 tests (employee list, report, history); 10k measurements and invariants in `docs/database-design.md` §13 (no latency SLA claimed) | 3.3, 6.2 |
 | NFR Security and privacy | Strong parameters, filtered logs, safe error messages | — | `int/log_redaction_test.rb`, log tests in `int/salary_records_test.rb` and `int/sessions_test.rb`, `config/security_config_test.rb`, no-echo error tests; security checklist in `BACKEND_PLAN.md` 6.3 | 4.1, 4.4, 6.1, 6.3 |
 | NFR Reliability | Transactions for salary changes; preserved history | — | Rollback and lock tests (`services/**`), DB constraint tests (`models/**`), duplicate-key race `422` (`int/employees_test.rb`) | 3.2, 4.4, 6.1 |
-| NFR Maintainability | Modular code, automated tests, documented API | — | The Minitest suite (246 runs), RuboCop, Brakeman; README and API spec §13 | 6.1, 7.2 |
+| NFR Maintainability | Modular code, automated tests, documented API | — | The Minitest suite (285 runs), RuboCop, Brakeman; README and API spec §13 | 6.1, 7.2 |
 | NFR Usability | Responsive, accessible UI | — | Out of backend scope; covered by the frontend (`FRONTEND_PLAN.md` F8.2: axe WCAG 2.1 AA, keyboard-only journeys, 390/768/1280 px checks) | — |
 
 Excluded from backend scope: frontend implementation and the features listed in §6.
@@ -139,6 +159,8 @@ Excluded from backend scope: frontend implementation and the features listed in 
 **Frontend traceability:** the frontend's requirement → test matrix (FR-01–FR-07, the API's client behaviours, and the frontend rules, with unit/component and end-to-end tests) is in `FRONTEND_PLAN.md` F8.1.
 
 ## 12. Changelog
+
+- **1.3 (2026-09-30):** scope change SC-01 (§9): new FR-08 bulk salary correction; §2 scope, §8 acceptance, §10 decision, and §11 traceability updated. The frontend upload page is recorded in `FRONTEND_PLAN.md`.
 
 - **1.2 (2026-09-29):** §11 names the implemented endpoints and actual test files (BACKEND_PLAN.md 7.2); scope and decisions unchanged.
 - **1.1 (2026-09-28):** approved decisions (§10) and backend traceability (§11).

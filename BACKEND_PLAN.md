@@ -4,7 +4,7 @@
 
 **Stack:** Ruby on Rails 8 (Ruby 3.2.0), MySql, Minitest. Target data volume: approximately 10,000 employees across multiple countries.
 
-**Scope:** Employee and salary-data management, salary history, authentication/authorization, and structured compensation analytics APIs. Excludes payroll processing, tax/statutory calculations, salary disbursement, external HRMS/banking integrations, conversational AI/RAG, and frontend implementation.
+**Scope:** Employee and salary-data management, salary history, bulk salary correction from file uploads (Phase 8, scope change SC-01), authentication/authorization, and structured compensation analytics APIs. Excludes payroll processing, tax/statutory calculations, salary disbursement, external HRMS/banking integrations, conversational AI/RAG, and frontend implementation.
 
 ## How to use this plan
 1. Read `CLAUDE.md`, `docs/requirements.md`, and relevant architecture/API documents before starting.
@@ -1144,6 +1144,41 @@ Notes:
 
 ---
 
+## Phase 8 — Bulk salary correction (scope change SC-01)
+**Goal:** Let HR correct many salary records, and schedule future salaries, from one CSV or Excel upload, with an upload history and a downloadable file of the rows that failed (FR-08).
+
+**Approval:** the owner requested and approved the feature on 2026-09-30. It is recorded as scope change SC-01 in `docs/requirements.md` §9. The owner later simplified the design (Q7, Q9) and extended it to scheduled salaries (Q5). The frontend page is recorded in `FRONTEND_PLAN.md` ("Bulk salary corrections — owner-approved extension").
+
+### Phase 8 decisions (2026-09-30)
+
+| ID | Decision | Reason |
+|---|---|---|
+| Q1 | Formats are `.csv` (UTF-8, BOM allowed) and `.xlsx` (first sheet only). Legacy `.xls` is not supported. New gems: `csv`, `roo`, `caxlsx` (ADR 005 amendment). | `.xls` needs `roo-xls` and the older `spreadsheet` gem. |
+| Q2 | Processing runs during the request (no job). A file is limited to 2 MB and 2,000 data rows, and an `.xlsx` to 50 MB unpacked. | 2,000 rows took 2.8 s on the test database (2026-09-30), so a background job isn't needed. Solid Queue is the upgrade path. |
+| Q3 | The file and header are checked before any row is read. Rejected files return `422 invalid_file` or `invalid_file_header` and create no history. | The owner asked for header validation before processing. |
+| Q4 | Header names match ignoring case, spaces, and hyphens, in any order. Unknown, blank, or duplicate columns are rejected. The `row_number` and `errors` columns of a response CSV are ignored. | Lets HR upload the corrected response file directly. |
+| Q5 | An existing employee/`effective_from` pair is corrected through `Salaries::CorrectionService` (current or scheduled records only). A missing pair creates a scheduled salary through `Salaries::ChangeService`; its date must be after today and after the latest salary start. | Keeps one write path per rule (I10, I11). Scheduling was an owner extension. |
+| Q6 | Rows are saved independently, in file order, each in its own service transaction. Valid rows stay saved when others fail. Rows with the same employee and date all fail. | A response file of failed rows only works if valid rows are kept. |
+| Q7 | History table `bulk_salary_corrections` with statuses `process`, `completed`, and `completed_with_errors` (which also covers "every row failed"). No row counts are stored or returned. | Owner simplification (migration `20260930120000`), replacing the first design's counters and `failed`/`interrupted` statuses. |
+| Q8 | The response file contains only failed rows, with `row_number` and `errors`. It is always CSV, and cells starting with a formula character are prefixed with `'`. Error messages never repeat submitted values. | CSV opens anywhere and matches the report export's formula guard (5.3). |
+| Q9 | One `BulkUploadService` holds the whole flow: parse, header, map, row processing, response CSV. Another module reuses it by subclassing (headers, mapper, `preload`, `duplicate_key`, `process_row`). There are no bulk concerns or processor folder. | Owner consolidation of the first `bulk_processor/` + concerns design. Reuse is shown by an employee-upload subclass in the service tests (`backend/README.md`). |
+| Q10 | Files are Active Storage attachments (`original_file`, `response_file`) on the `local` disk service. They are downloaded only through authenticated actions with `Cache-Control: no-store`. No Active Storage URL is returned, and files are never purged automatically. | Uses Rails' built-in storage with no new infrastructure. Retention is an open owner decision. |
+
+**Unexpected errors:** the service marks the upload `completed_with_errors`, attaches the known error rows plus the unconfirmed rows ("Processing stopped…"), and re-raises, so the client gets the generic `500`. A process crash or database outage can leave `process`.
+
+**Accepted limitations:** the size limits in Q2; files kept on disk with no retention policy (production needs persistent, access-restricted storage for `backend/storage/`); an upload can be left at `process` by a crash; no real concurrent-upload test (as R6).
+
+### 8.1 Bulk upload API
+**Status:** Done (2026-09-30)
+- Gems `csv`, `roo`, `caxlsx`; `active_storage:install`; migrations `20260930101200`, `20260930110000`, `20260930120000`.
+- `BulkSalaryCorrection` model, `BulkUploadService`, `Api::V1::BulkSalaryCorrectionsController` (`index`, `show`, `create`, `template`, `original_file`, `response_file`), jbuilder views, and routes above the `/api/v1` catch-all.
+- Tests: `test/services/bulk_upload_service_test.rb`, `test/models/bulk_salary_correction_test.rb`, `test/integration/api/v1/bulk_salary_corrections_test.rb` (38 runs). The route-protection walk covers the new routes automatically.
+- Also added: a public landing page at `/` (`HomeController`, `test/integration/home_test.rb`).
+
+### 8.2 Documentation
+**Status:** Done (2026-09-30)
+- API spec §9A, plus §1, §2.2, and §10–§14 (v2.6); requirements v1.3 (FR-08, SC-01, §10, §11); architecture v2.4 (§4.5 flow); database design v2.3 (§3.7, I14); ADR 005 amendment; root and backend READMEs; `CLAUDE.md` scope.
+
 ## Cross-phase rules
 - Keep this plan limited to Rails backend, persistence, and REST API work.
 - Do not implement frontend screens or frontend tooling in these phases.
@@ -1210,6 +1245,8 @@ Notes:
 | 2026-09-29 | 7.1 | Reviewed all 78 non-generated backend files, the routes, and `.claude/rules/*` against the docs. Findings F1–F8: no Critical or High; **F1 Medium** (a huge `page` → `500`, the `OFFSET` overflows MySQL's 64-bit limit) awaits the owner; **F2 Low fixed** (`demo:verify` label renamed to `employees_without_salary_records`); F3–F5 doc items (`PUT` alias, session keep-alive, Solid Cache prerequisite) and F8 doc drift passed to 7.2; F6/F7 informational. Scope and currency checks pass | Throwaway probe test (scratchpad, deleted) confirmed F1 on `/employees` and `/reports/salaries`; read-only runner probe of huge IDs (`400`/`404`, fine); `bin/rails test` ×5 seeds: 245 runs, 1,040 assertions, 0 failures; RuboCop 130 files clean; Brakeman 0 warnings | Owner: approve or decline the F1 fix (cap `page` at 1,000,000 → `400`) |
 | 2026-09-29 | 7.2 | Root README rewritten per P5/P8/P3; API spec v2.1 (§11 phase and `PUT` alias, §13 client integration notes, §14 changelog); requirements v1.2 (§11 with actual test files), architecture v2.3 (§3 real code layout, §9 Solid Cache prerequisite, changelog), database design v2.2 (changelog); `CLAUDE.md` Commands; plan "Future work" with the frontend prerequisites. Phase 7 gate passed | Clean clone of `707ff61` (`.env` copied unread): `bundle check`, `db:test:prepare`, 245 runs 0 failures, health 200, signed-out 401, clone deleted. Final regression: `bin/rails test` ×5 seeds 245 runs, 1,040 assertions, 0 failures; RuboCop 130 clean; Brakeman 0 warnings; live smoke on :3113. README links checked | Open: F1 (owner decision, documented as a known limitation); P10 owner git hygiene before the handoff commit |
 | 2026-09-29 | 7.1 F1 fix | Owner approved F1. `Api::QueryParams::MAX_PAGE = 1_000_000`: a larger `page` now returns `400` (was `500` from an overflowing MySQL `OFFSET`). A `QueryParams` unit test and endpoint cases in `employees_test` and `salary_report_test`. API spec §2.3 and §14; README (limitation removed, test count) and requirements §11 test count updated | Mutation check (without the cap, the endpoint tests error); `bin/rails test` ×5 seeds: 246 runs, 1,054 assertions, 0 failures; RuboCop 130 files clean; Brakeman 0 warnings | Open: P10 owner git hygiene |
+| 2026-09-30 | 8.1 | Bulk salary correction API (SC-01, decisions Q1–Q10): CSV/XLSX upload with a header check before processing, per-row correction or scheduled salary through the salary services, a response CSV of failed rows, upload history with Active Storage files, template and authenticated `no-store` downloads. Owner simplification: a single `BulkUploadService`, three statuses, no row counts, `response_file`. Public landing page at `/` | `bin/rails test`: 285 runs, 1,312 assertions, 0 failures (bulk: 38 runs); RuboCop 145 files clean; Brakeman 0 warnings; 2,000-row upload 2.8 s (test database, rolled back) | Open: file retention policy (Q10) |
+| 2026-09-30 | 8.2 | Documentation for bulk salary correction: requirements v1.3 (FR-08, SC-01), architecture v2.4, database design v2.3, ADR 005 amendment, root README, `CLAUDE.md` scope, this phase. API spec v2.6 and `backend/README.md` were already current | Docs checked against the code and tests; frontend `npm test` 210 passed, `playwright --list` 30 tests | — |
 
 ## Current progress
 - **Phase 1** — Backend requirements and design — **Done (gate passed 2026-09-28)**
@@ -1219,8 +1256,9 @@ Notes:
 - **Phase 5** — Compensation analytics and report APIs — **Done (gate passed 2026-09-29)**. 5.1, 5.2, 5.3 Done.
 - **Phase 6** — Backend quality, performance, and regression — **Done (gate passed 2026-09-29)**. 6.1, 6.2, 6.3 Done. N14 declined (accepted risk R2).
 - **Phase 7** — Backend documentation and handoff — **Done (gate passed 2026-09-29)**. 7.1, 7.2 Done; F1 fixed. Open: P10 (owner git hygiene).
-- **Next:** owner does P10 and commits; then frontend planning (see "Future work")
-- **Overall status:** Backend Phases 1–7 complete
+- **Phase 8** — Bulk salary correction (SC-01) — **Done (2026-09-30)**. 8.1, 8.2 Done. Open: file retention policy (Q10).
+- **Next:** owner commits Phase 8
+- **Overall status:** Backend Phases 1–8 complete
 
 ## Future work
 Frontend phases will be added after the backend/API scope and implementation are complete or stable. The backend is ready for them (Phase 7). Prerequisites and pointers for the frontend plan:

@@ -23,7 +23,7 @@ module ActiveSupport
       @@rake_tasks_loaded = true
     end
 
-    # Uploaded CSV / XLSX files for BulkProcessor tests; rows include the header row.
+    # Uploaded CSV / XLSX files for bulk upload tests; rows include the header row.
     def csv_upload(rows, filename: "upload.csv", content: nil)
       uploaded_file(content || CSV.generate { |csv| rows.each { |row| csv << row } }, filename)
     end
@@ -41,7 +41,7 @@ module ActiveSupport
       Rack::Test::UploadedFile.new(file.path, "application/octet-stream", true, original_filename: filename)
     end
 
-    # Parses a CSV or XLSX file produced by BulkProcessor::ResultWriter into rows of strings.
+    # Parses a CSV or XLSX file produced by BulkUploadService into rows of strings.
     def read_result_file(content, format)
       if format == "xlsx"
         file = Tempfile.new([ "result", ".xlsx" ], binmode: true)

@@ -4,7 +4,7 @@ require "csv"
 # Takes the same SalaryReportQuery relation as the JSON report, so rows and order match it.
 #
 # - One query: allowlisted columns are plucked in report order with LIMIT cap + 1. A larger result raises
-#   TooLarge instead of being truncated. About 10k rows fit comfortably in memory, so nothing is streamed.
+#   TooLarge instead of being truncated. About 40k rows fit comfortably in memory, so nothing is streamed.
 # - Fixed column allowlist, no email (D18). Amounts are monthly, rounded to the currency's minor units.
 # - Text cells starting with = + - @ tab or CR are prefixed with ' so spreadsheets do not run them as formulas.
 # - A UTF-8 byte-order mark lets Excel show accented names correctly.
@@ -13,7 +13,7 @@ class SalaryReportCsv
 
   class TooLarge < StandardError; end
 
-  MAX_ROWS = 10_000
+  MAX_ROWS = 40_000
   BOM = "﻿".freeze
   HEADERS = %w[employee_number first_name last_name country_code country_name department employment_status
                monthly_amount currency_code effective_from].freeze

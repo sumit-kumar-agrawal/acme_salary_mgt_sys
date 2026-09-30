@@ -60,6 +60,12 @@ const NAV_SECTIONS: {
     label: "People",
     items: [
       { to: "/employees", label: "Employees", end: false, icon: "employees" },
+      {
+        to: "/bulk-salary-corrections",
+        label: "Bulk salary corrections",
+        end: false,
+        icon: "report",
+      },
     ],
   },
   {

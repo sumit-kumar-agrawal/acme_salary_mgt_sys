@@ -5,8 +5,8 @@ A web application for ACME's HR Manager to manage salary information for about 1
 Salary amounts are **monthly gross base pay**, stored together with their currency. Amounts in different currencies are never summed together. All development and demo data is synthetic.
 
 > **Status:** complete for development and demos.
-> - **Backend** (Rails JSON API, [`BACKEND_PLAN.md`](BACKEND_PLAN.md)): employees, salary history, analytics, reports, and CSV export, with 246 automated tests.
-> - **Frontend** (React, [`FRONTEND_PLAN.md`](FRONTEND_PLAN.md)): dashboard, employees and salary history, analytics, and the salary report with CSV export, with 207 unit and component tests and 29 end-to-end tests.
+> - **Backend** (Rails JSON API, [`BACKEND_PLAN.md`](BACKEND_PLAN.md)): employees, salary history, bulk salary correction from CSV/Excel uploads, analytics, reports, and CSV export, with 285 automated tests.
+> - **Frontend** (React, [`FRONTEND_PLAN.md`](FRONTEND_PLAN.md)): dashboard, employees and salary history, bulk salary corrections, analytics, and the salary report with CSV export, with 210 unit and component tests and 30 end-to-end tests.
 >
 > Production deployment is not set up yet (see Known limitations).
 
@@ -93,7 +93,7 @@ Docker support is planned for a later phase.
 
 ### Updating an existing checkout
 
-After pulling new commits, apply any new migrations (for example, the Phase 6.2 indexes) to both databases:
+After pulling new commits, install any new gems and apply any new migrations (for example, the Phase 6.2 indexes, or the Active Storage and `bulk_salary_corrections` tables for bulk uploads) to both databases:
 
 ```bash
 cd backend
@@ -130,11 +130,11 @@ nvm use
 npm run dev                   # app on http://localhost:5173
 ```
 
-Open `http://localhost:5173` and sign in with the HR login from setup step 5. The app opens on the dashboard; Employees, Analytics, and Salary report are in the sidebar. For a full data set, load the demo data first (see Sample data).
+Open `http://localhost:5173` and sign in with the HR login from setup step 5. The app opens on the dashboard; Employees, Bulk salary corrections, Analytics, and Salary report are in the sidebar. For a full data set, load the demo data first (see Sample data).
 
 In development, Vite forwards `/api` to the Rails server, so the browser sees one site and the session cookie works without CORS (ADR 004, ADR 006). The proxy keeps the browser's `Host` header on purpose: Rails' CSRF check needs it.
 
-`GET /api/v1/health` returns `200 {"data":{"status":"ok","database":"ok"}}`, or `503` when the database is unreachable. It needs no login.
+`http://localhost:3000/` shows a public landing page that describes the app (no data). `GET /api/v1/health` returns `200 {"data":{"status":"ok","database":"ok"}}`, or `503` when the database is unreachable. It needs no login.
 
 ## Using the API
 
@@ -149,9 +149,10 @@ The full contract is in [docs/api-specification.md](docs/api-specification.md). 
 | Salary history | `GET /employees/:id/salary_records`, `POST …/salary_records` (salary change), `GET …/salary_records/:rid`, `PATCH …/salary_records/:rid` (correct a current or scheduled record) |
 | Analytics | `GET /analytics/summary`, `GET /analytics/distribution`, `GET /analytics/breakdown?by=country\|department` |
 | Reports | `GET /reports/salaries` (paginated JSON), `GET /reports/salaries.csv` (download, up to 10,000 rows) |
+| Bulk salary correction | `GET /bulk_salary_corrections/template` (CSV or `?file_format=xlsx`), `POST /bulk_salary_corrections` (multipart `file`: CSV or `.xlsx`, up to 2 MB and 2,000 rows), `GET /bulk_salary_corrections` (history), `GET /bulk_salary_corrections/:id`, `GET …/:id/original_file`, `GET …/:id/response_file` (CSV of failed rows) |
 
 Conventions:
-- JSON bodies are wrapped in a resource key (`employee`, `salary_record`).
+- JSON bodies are wrapped in a resource key (`employee`, `salary_record`). The bulk upload is the exception: it is `multipart/form-data` with a `file` part (API spec §9A).
 - Errors use one envelope, `{"error": {"code", "message", "details"}}`.
 - Lists return `meta` with the page (maximum 1,000,000), `per_page` (default 25, maximum 100), and totals.
 - Money is a decimal string always paired with `currency_code`, and totals are per currency.
@@ -192,7 +193,7 @@ Sessions end after 30 minutes idle or 8 hours in total. Sign-in is limited to 5 
 
 ```bash
 cd backend
-bin/rails test                                          # full Minitest suite (246 runs)
+bin/rails test                                          # full Minitest suite (285 runs)
 bin/rails test test/integration/api/v1/health_test.rb   # a single file
 bin/rails test test/integration/api/v1/health_test.rb:13  # a single test (by line)
 bin/rubocop                                             # style (rubocop-rails-omakase)
@@ -213,7 +214,7 @@ bin/brakeman --no-pager                                 # static security scan
 Run from `frontend/` after `nvm use`:
 
 ```bash
-npm test                 # unit and component tests (Vitest, React Testing Library, MSW): 207 tests
+npm test                 # unit and component tests (Vitest, React Testing Library, MSW): 210 tests
 npm run lint             # ESLint, zero warnings allowed
 npm run typecheck        # TypeScript
 npm run format           # Prettier (writes); npx prettier --check . only checks
@@ -262,6 +263,12 @@ Backend details and reasons are in `BACKEND_PLAN.md` (accepted risks R1–R6 und
   - salary changes can't be inserted into the middle of a history, and a scheduled record's start date can't be corrected;
   - salary history plus timestamps is the only audit trail.
 - **Users:** one HR Manager, no roles, no sign-up or password reset.
+- **Bulk salary correction:**
+  - processed during the request (no background job), so a file is limited to 2 MB and 2,000 rows; split larger files;
+  - `.csv` and `.xlsx` only (no legacy `.xls`), and only the first `.xlsx` sheet is read;
+  - the response file is always CSV, even for an `.xlsx` upload, and no row counts are kept;
+  - uploaded and response files contain salaries and stay on the server's disk (`backend/storage/`) with no automatic deletion; that directory needs persistent, access-restricted storage in production;
+  - a process crash mid-upload can leave the history status at `process`; there is no automatic retry.
 - **Reports:**
   - the CSV export is synchronous and capped at 10,000 rows (larger results return `422 export_too_large`);
   - paging uses OFFSET;

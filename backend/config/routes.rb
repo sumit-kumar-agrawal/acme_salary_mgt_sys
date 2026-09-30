@@ -24,12 +24,12 @@ Rails.application.routes.draw do
         resources :salary_records, only: %i[index show create update]
       end
 
-      # Bulk salary correction from a CSV/XLSX upload, its history, and its files (Api::BulkUploadable).
+      # Bulk salary correction from a CSV/XLSX upload, its history, and its files .
       resources :bulk_salary_corrections, only: %i[index show create] do
         get :template, on: :collection
         member do
           get :original_file
-          get :failed_rows_file
+          get :response_file
         end
       end
 

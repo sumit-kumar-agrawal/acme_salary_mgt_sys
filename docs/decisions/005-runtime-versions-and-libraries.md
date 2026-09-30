@@ -1,6 +1,6 @@
 # ADR 005: Runtime Versions and Backend Libraries
 
-- **Status:** Accepted (revised 2026-09-28 to match the generated application)
+- **Status:** Accepted (revised 2026-09-28 to match the generated application; amended 2026-09-30 for bulk salary correction)
 - **Date:** 2026-09-28
 - **Related:** BACKEND_PLAN.md D25, D26 and Phase 2 findings (E and G items); `.claude/rules/backend.md` ("Use JSON builder for API responses", "Do not add dependencies without justification")
 
@@ -30,6 +30,9 @@ The project owner generated `backend/` with the Rails 8 default generator, not t
 | `solid_cache` | MySQL-backed `Rails.cache`. Also serves as the store for login `rate_limit` (ADR 004), so no Redis is needed |
 | `solid_queue` | MySQL-backed Active Job adapter. No jobs are planned; kept as the Rails 8 default with no extra infrastructure |
 | `bcrypt` (~> 3.1.7) | `has_secure_password` for the HR login (ADR 004); added 2026-09-28 in 4.1 (L3) |
+| `csv` (~> 3.2) | Reads bulk upload CSV files and writes the response CSV and template (FR-08). Listed explicitly because `csv` stops being a default gem in Ruby 3.4; added 2026-09-30 |
+| `roo` (~> 3.0) | Reads `.xlsx` bulk uploads (first sheet, typed date and number cells). Uses the already-locked `rubyzip` 3 and `nokogiri`; added 2026-09-30 |
+| `caxlsx` (~> 4.5) | Writes the `.xlsx` bulk upload template, and `.xlsx` fixtures in tests. Compatible with `rubyzip` 3; added 2026-09-30 |
 
 **Adopted development/test gems:** `debug`, `brakeman` (security scan), `rubocop-rails-omakase` (style), `faker` (synthetic data for factories and development demo seeds; added 2026-09-28, J1), `web-console`. Test-only: `capybara`, `selenium-webdriver`, `factory_bot_rails` (factories for employees and salary records; added 2026-09-28, J1). Reference data in tests comes from Rails fixtures.
 
@@ -53,5 +56,7 @@ The project owner generated `backend/` with the Rails 8 default generator, not t
 - `json` is constrained to `< 3` in the Gemfile: json 3.x removed the `quirks_mode` option that ActiveSupport 8.0 still passes, which breaks JSON rendering. Remove the constraint once Rails supports json 3.
 - Rails 8's built-in `rate_limit` and Solid Cache replace the in-process cache concern noted in the architecture.
 - JSON shapes live in `app/views/api/v1/**/*.json.jbuilder`, and the rounding of monetary aggregates happens there.
-- The CSV export (BACKEND_PLAN.md 5.3) uses Ruby's `csv` library, a default gem on Ruby 3.2, so no Gemfile entry is needed. From Ruby 3.4 it is a bundled gem: add `gem "csv"` to the Gemfile as part of any Ruby upgrade.
+- The CSV export (BACKEND_PLAN.md 5.3) and bulk uploads use Ruby's `csv` library. It is now listed in the Gemfile (2026-09-30), so the Ruby 3.4 change from default gem to bundled gem needs no further action.
+- **Active Storage** (part of `rails/all`, no new gem) stores bulk upload files on the `local` disk service. Its tables were installed on 2026-09-30 (`active_storage:install`). Its built-in `/rails/active_storage/*` routes serve files only for signed IDs, which the API never returns; downloads go through the authenticated bulk endpoints.
+- Legacy `.xls` files are not supported: that would need `roo-xls` and the older `spreadsheet` gem.
 - Any further gem needs an amendment to this ADR with a justification.

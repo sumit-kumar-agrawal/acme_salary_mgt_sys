@@ -18,6 +18,7 @@ Build a web application to manage salary information for approximately 10,000 em
 
 - Employee management
 - Salary records and salary history
+- Bulk salary correction from CSV/XLSX uploads (scope change SC-01, docs/requirements.md FR-08; BACKEND_PLAN.md Phase 8)
 - Search, filters and pagination
 - Salary analytics and reports
 - Single HR Manager user

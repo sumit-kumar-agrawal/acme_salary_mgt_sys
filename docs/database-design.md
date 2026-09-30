@@ -1,7 +1,7 @@
 # Salary Management System — Database Design
 
-**Status:** Implemented through Phase 6 (2026-09-29). Changes are listed in §14  
-**Version:** 2.2 (2026-09-29)  
+**Status:** Implemented through Phase 6 (2026-09-29), plus bulk salary correction history (§3.7, 2026-09-30). Changes are listed in §14  
+**Version:** 2.3 (2026-09-30)  
 **Engine:** MySQL 8.0.16+ (8.4 locally), InnoDB, `utf8mb4` / `utf8mb4_unicode_ci` (as generated in `backend/config/database.yml`)  
 **Databases:** `salary_management` (development; the name comes from `DB_NAME`) and `salary_management_test`. In development, the Rails 8 Solid Cache and Solid Queue tables share the primary database. They are managed by their own schema files and are not part of this domain design.
 
@@ -24,6 +24,7 @@ erDiagram
     DEPARTMENTS ||--o{ EMPLOYEES      : "belongs to"
     EMPLOYEES   ||--o{ SALARY_RECORDS : "has history"
     CURRENCIES  ||--o{ SALARY_RECORDS : denominates
+    USERS       ||--o{ BULK_SALARY_CORRECTIONS : uploads
 
     USERS {
       bigint id PK
@@ -64,9 +65,18 @@ erDiagram
       date effective_to "nullable = open-ended"
       tinyint open_flag "generated: 1 or NULL"
     }
+    BULK_SALARY_CORRECTIONS {
+      bigint id PK
+      bigint user_id FK
+      varchar status "process | completed | completed_with_errors"
+      varchar file_format "csv | xlsx"
+      varchar original_filename
+      datetime started_at "nullable"
+      datetime finished_at "nullable"
+    }
 ```
 
-`USERS` has no relationships; it holds the single HR login (ADR 004). Every table also has `created_at` and `updated_at` (`DATETIME(6)`, NOT NULL), which serve as the audit timestamps (D5).
+`USERS` holds the single HR login (ADR 004); its only relationship is to the bulk upload history (§3.7). Every table also has `created_at` and `updated_at` (`DATETIME(6)`, NOT NULL), which serve as the audit timestamps (D5).
 
 ## 3. Tables
 
@@ -137,6 +147,28 @@ Employees are never deleted; termination is a status change (D13). Country and d
 
 Rails (implemented in 3.2, `db/migrate/20260928100005_create_salary_records.rb`): `t.virtual :open_flag, type: :integer, limit: 1, as: "IF(effective_to IS NULL, 1, NULL)", stored: true`; `attr_readonly :employee_id, :effective_from`. The indexes are added before the foreign keys, so MySQL creates no extra FK indexes. **Schema round-trip verified (J13):** `schema.rb` keeps the virtual column and both CHECK constraints, and tests against the test database (built from `schema.rb`) prove the open-flag index and CHECKs fire.
 
+### 3.7 `bulk_salary_corrections` (added 2026-09-30, FR-08)
+
+One row per processed bulk salary upload (API spec §9A). An upload rejected for its file or header creates no row.
+
+| Column | Type | Null | Constraints / notes |
+|---|---|---|---|
+| `id` | BIGINT | no | PK |
+| `user_id` | BIGINT | no | FK → `users.id`; the HR user who uploaded the file |
+| `status` | VARCHAR(30) | no | Default `process`. `CHECK (status IN ('process', 'completed', 'completed_with_errors'))`; model enum with validation. `completed_with_errors` also covers uploads where every row failed |
+| `file_format` | VARCHAR(10) | no | `CHECK (file_format IN ('csv', 'xlsx'))`; the format of the uploaded file |
+| `original_filename` | VARCHAR(255) | no | Base name of the upload, truncated to 255 characters |
+| `started_at`, `finished_at` | DATETIME(6) | yes | Processing start and end; `finished_at` stays NULL while `process` |
+
+No salary values and no row counts are stored in this table. The files are **Active Storage** attachments, not columns:
+
+- `original_file`: the upload exactly as received (CSV or XLSX).
+- `response_file`: a CSV of the failed rows with `row_number` and `errors`, attached only when a row failed.
+
+Their metadata lives in the standard Active Storage tables (`active_storage_blobs`, `active_storage_attachments`, `active_storage_variant_records`, migration `20260930101114`), and the bytes are on the `local` disk service (`backend/storage/`). Files are kept indefinitely; there is no purge job.
+
+Migrations: `20260930101200_create_bulk_salary_corrections.rb`, then `20260930110000_extend_bulk_import_outcomes.rb` and `20260930120000_simplify_bulk_salary_corrections.rb`. The last one removed the row-count columns, reduced the statuses to the three above, and renamed the `failed_rows_file` attachment to `response_file`. Its `down` restores the columns with zero values, because removed counts cannot be recovered.
+
 ## 4. Indexes
 
 Each index is justified by a query or constraint. MySQL creates an index for every FK automatically, unless an existing index already starts with that column.
@@ -158,6 +190,9 @@ Each index is justified by a query or constraint. MySQL creates an index for eve
 | `salary_records` | `(employee_id, effective_from)` | UNIQUE | One record per start date; history listing in order; latest-record lookup under lock; FK index for `employee_id` |
 | `salary_records` | `(employee_id, open_flag)` | UNIQUE | **At most one open-ended record per employee** (NULLs do not collide) |
 | `salary_records` | `(currency_code)` | FK | Currency FK, currency filter |
+| `bulk_salary_corrections` | `(user_id)` | FK | User FK |
+| `bulk_salary_corrections` | `(created_at)` | secondary | Upload history, newest first |
+| `bulk_salary_corrections` | `(status)` | secondary | Status lookups (kept small; no status filter is exposed yet) |
 
 Not added up front: composite filter indexes on `employees`, sort indexes for `hired_on` and `created_at`, and an `(effective_from, effective_to)` index. **Measured in 6.2 (§13):** the `hired_on`, `created_at`, and `(employment_status, country_id)` indexes met the BACKEND_PLAN.md N11 rule and were added (migration `20260929100001_add_measured_indexes.rb`). `(effective_from, effective_to)` changed no timing and was not added. The single-column `employment_status` index is now a left prefix of the composite; it is kept (removing it was not measured).
 
@@ -178,8 +213,9 @@ Not added up front: composite filter indexes on `employees`, sort indexes for `h
 | I11 | Historical records are immutable. Only the amount and currency of the record in effect today, or of a future-dated record, can change (D4 + O1) | `attr_readonly` columns | — | `CorrectionService`: lock → verify editable → update |
 | I12 | No hard deletes of employees or salary records | ON DELETE RESTRICT | no destroy routes | — |
 | I13 | `effective_from` ≥ `hired_on` when `hired_on` is present. This is enforced both ways: a salary can't start before hire, and an employee update can't move `hired_on` after that employee's earliest salary `effective_from` | — | custom validation on SalaryRecord and Employee | — |
+| I14 | Bulk upload status and file format are allowed values | CHECK (2) | enum and inclusion validations | `BulkUploadService` sets the status |
 
-I10 relies on every write going through the services. Direct SQL or console writes could bypass it; the model-level overlap validation catches most of these cases.
+I10 relies on every write going through the services. Bulk uploads (§3.7) write salary records only through `ChangeService` and `CorrectionService`, so I10 and I11 hold for them too. Direct SQL or console writes could bypass it; the model-level overlap validation catches most of these cases.
 
 ## 6. Transactions and concurrency
 
@@ -195,6 +231,7 @@ I10 relies on every write going through the services. Direct SQL or console writ
   If there is no prior record, only the insert runs.
 - **Correction** (`Salaries::CorrectionService`): the same employee-row lock. Verify the record is **editable**, then update `amount` and/or `currency_code`. A record is editable when it is in effect on `Date.current`, or when its `effective_from` is after `Date.current` (future-dated, O1). Records whose period ended before today are historical and rejected.
 - **Employee create with an initial salary** (`Employees::CreateService`): both inserts run in one transaction.
+- **Bulk salary upload** (`BulkUploadService`, §3.7): the history row is created first, then each file row is written in **its own** service transaction (correction or salary change, each with the employee-row lock above). A failed row rolls back only itself, so earlier and later rows stay committed. Rows run in file order, so a later row sees salary history written by an earlier row. The history row is updated to its final status at the end.
 - **Isolation:** InnoDB's default `REPEATABLE READ`. The employee-row lock serialises all salary writes for one employee, and the unique indexes (I8, I9) are the backstop if the lock is bypassed.
 - Any failure rolls back the whole operation. A unique-index violation (`ActiveRecord::RecordNotUnique`, e.g. two concurrent creates with the same `employee_number`) is mapped to `422 validation_failed` with a generic message. `details` is given only for the `employee_number` and `email` indexes, and the duplicate value is never echoed (implemented in 6.1, BACKEND_PLAN.md N5). CHECK violations are unreachable through the API because validations run first; if one occurred it would be a `500`.
 
@@ -414,6 +451,8 @@ Rule: add an index only when a scenario exceeds 100 ms uncached, or an index rem
 Descending sorts order by `field DESC, id ASC`, a mixed direction a single-column index can't serve, so they stay a filesort of about 7 ms. That is below the threshold, and changing the tie-break direction would alter the documented ordering (API §2.4), so neither was changed.
 
 ## 14. Changelog
+
+- **2.3 (2026-09-30):** bulk salary correction (FR-08): `bulk_salary_corrections` table and Active Storage files (§2, new §3.7), indexes (§4), rule I14 (§5), and per-row transactions (§6).
 
 - **2.2 (2026-09-29):** status set to implemented (BACKEND_PLAN.md 7.2).
 - **2.1 (2026-09-29):**
