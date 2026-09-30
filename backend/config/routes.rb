@@ -24,6 +24,15 @@ Rails.application.routes.draw do
         resources :salary_records, only: %i[index show create update]
       end
 
+      # Bulk salary correction from a CSV/XLSX upload, its history, and its files (Api::BulkUploadable).
+      resources :bulk_salary_corrections, only: %i[index show create] do
+        get :template, on: :collection
+        member do
+          get :original_file
+          get :failed_rows_file
+        end
+      end
+
       # Read-only, per-currency compensation analytics (docs/api-specification.md §8, BACKEND_PLAN.md M7).
       namespace :analytics do
         resource :summary, only: :show
@@ -46,6 +55,6 @@ Rails.application.routes.draw do
   # get "manifest" => "rails/pwa#manifest", as: :pwa_manifest
   # get "service-worker" => "rails/pwa#service_worker", as: :pwa_service_worker
 
-  # Defines the root path route ("/")
-  # root "posts#index"
+  # Public landing page with a high-level description of the service (no employee or salary data).
+  root "home#show"
 end

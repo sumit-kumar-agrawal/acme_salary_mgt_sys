@@ -23,7 +23,36 @@ module ActiveSupport
       @@rake_tasks_loaded = true
     end
 
-    # Add more helper methods to be used by all tests here...
+    # Uploaded CSV / XLSX files for BulkProcessor tests; rows include the header row.
+    def csv_upload(rows, filename: "upload.csv", content: nil)
+      uploaded_file(content || CSV.generate { |csv| rows.each { |row| csv << row } }, filename)
+    end
+
+    def xlsx_upload(rows, filename: "upload.xlsx")
+      package = Axlsx::Package.new
+      package.workbook.add_worksheet(name: "Sheet1") { |sheet| rows.each { |row| sheet.add_row row } }
+      uploaded_file(package.to_stream.read, filename)
+    end
+
+    def uploaded_file(content, filename)
+      file = Tempfile.new([ "upload", File.extname(filename) ], binmode: true)
+      file.write(content)
+      file.rewind
+      Rack::Test::UploadedFile.new(file.path, "application/octet-stream", true, original_filename: filename)
+    end
+
+    # Parses a CSV or XLSX file produced by BulkProcessor::ResultWriter into rows of strings.
+    def read_result_file(content, format)
+      if format == "xlsx"
+        file = Tempfile.new([ "result", ".xlsx" ], binmode: true)
+        file.write(content)
+        file.close
+        sheet = Roo::Excelx.new(file.path).sheet(0)
+        (1..sheet.last_row).map { |index| sheet.row(index).map(&:to_s) }
+      else
+        CSV.parse(content.dup.force_encoding(Encoding::UTF_8).delete_prefix("﻿"))
+      end
+    end
   end
 end
 
