@@ -166,26 +166,39 @@ sequenceDiagram
     participant C as Client
     participant B as BulkSalaryCorrectionsController
     participant U as BulkUploadService
-    participant S as Salaries::CorrectionService / ChangeService
+    participant S as Salary services
     participant DB as MySQL
     participant FS as Active Storage (disk)
     C->>B: POST /bulk_salary_corrections (multipart file) + X-CSRF-Token
     B->>U: call(file, user)
-    U->>U: check type, size (2 MB), rows (2,000); parse CSV or first XLSX sheet
+    U->>U: check type, size (2 MB) and rows (2,000), then parse CSV or first XLSX sheet
+    U->>U: check header columns
     alt unreadable file or header mismatch
-        U-->>B: InvalidFileError / HeaderMismatchError
-        B-->>C: 422 invalid_file / invalid_file_header (nothing saved)
+        U-->>B: InvalidFileError or HeaderMismatchError
+        B-->>C: 422 invalid_file or invalid_file_header (nothing saved)
     else header ok
         U->>DB: INSERT bulk_salary_corrections (status process)
         U->>FS: store original_file
         U->>DB: preload employees, salary records, currencies (3 queries)
         loop each row, in file order
-            U->>U: required values, duplicates, formats, currency, editability
-            U->>S: existing employee/date → CorrectionService; new future date → ChangeService
-            Note over S,DB: own transaction + employee row lock; rules rechecked
+            U->>U: check required values, duplicates, formats, currency, editability
+            alt row invalid
+                U->>U: add row to failed rows
+            else employee and date match an existing record
+                U->>S: Salaries::CorrectionService (amount, currency_code)
+                S->>DB: lock employee, recheck, UPDATE record (own transaction)
+                S-->>U: saved, or errors added to failed rows
+            else new future date
+                U->>S: Salaries::ChangeService (effective_from, amount, currency_code)
+                S->>DB: lock employee, close previous period, INSERT record (own transaction)
+                S-->>U: saved, or errors added to failed rows
+            end
         end
-        U->>FS: store response_file (failed rows only, CSV)
-        U->>DB: UPDATE status completed / completed_with_errors
+        opt at least one failed row
+            U->>FS: store response_file (failed rows only, CSV)
+        end
+        U->>DB: UPDATE status completed or completed_with_errors
+        U-->>B: upload record
         B-->>C: 201 {data: upload}
     end
 ```
