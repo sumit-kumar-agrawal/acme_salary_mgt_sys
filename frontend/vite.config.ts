@@ -18,7 +18,8 @@ export default defineConfig(({ mode }) => {
         // changeOrigin must stay false: Rails' CSRF origin check compares the browser's Origin with the
         // Host it receives, so rewriting Host to the Rails port makes every write fail with 422 invalid_csrf_token.
         "/api": {
-          target: env.VITE_PROXY_TARGET || "http://localhost:3000",
+          //target: env.VITE_PROXY_TARGET || "http://localhost:3000",
+          target: env.VITE_PROXY_TARGET || "https://api-demo.jatajoot.shop",
           changeOrigin: false,
         },
       },
