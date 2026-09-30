@@ -194,7 +194,8 @@ async function fetchApi(
   const method = (init.method ?? "GET").toUpperCase();
   const requestHeaders = new Headers(headers);
   requestHeaders.set("Accept", accept);
-  if (init.body !== undefined)
+  if (init.body instanceof FormData) requestHeaders.delete("Content-Type");
+  else if (init.body !== undefined)
     requestHeaders.set("Content-Type", "application/json");
   if (WRITE_METHODS.has(method) && csrfToken)
     requestHeaders.set("X-CSRF-Token", csrfToken);

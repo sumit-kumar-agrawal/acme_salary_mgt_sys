@@ -1,4 +1,5 @@
 import { Route, Routes } from "react-router";
+import BulkSalaryCorrectionsPage from "@/components/bulk/BulkSalaryCorrectionsPage";
 import SignInPage from "@/components/auth/SignInPage";
 import NotFoundPage from "@/components/common/NotFoundPage";
 import AnalyticsPage from "@/components/dashboard/AnalyticsPage";
@@ -29,6 +30,10 @@ export default function AppRoutes() {
         <Route path="employees/new" element={<EmployeeCreatePage />} />
         <Route path="employees/:id" element={<EmployeeDetailPage />} />
         <Route path="employees/:id/edit" element={<EmployeeEditPage />} />
+        <Route
+          path="bulk-salary-corrections"
+          element={<BulkSalaryCorrectionsPage />}
+        />
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="reports/salaries" element={<SalaryReportPage />} />
         <Route path="*" element={<NotFoundPage />} />

@@ -1365,3 +1365,11 @@ Inputs: the root `README.md` and `frontend/README.md`; `docs/architecture.md`, `
 - **F8** — Quality review — **Done (gate passed 2026-09-30)**. F8.1, F8.2 Done.
 - **F9** — Final review and handoff — **Done (gate passed 2026-09-30)**. F9.1, F9.2 Done.
 - **All frontend phases F1–F9 are done.** Open items for the owner are listed under F9.2 "Handoff".
+
+## Bulk salary corrections — owner-approved extension (2026-09-30)
+
+The owner explicitly requested backend simplification and a frontend response-file download link. This authorizes the required backend changes during frontend work: remove row counters, use only `process` / `completed` / `completed_with_errors`, consolidate the bulk processing service, and expose `response_file_path`.
+
+Implementation: protected `/bulk-salary-corrections` page and People navigation link; multipart upload with CSRF; CSV template; paginated upload history showing filename, status, and response CSV link. Salary changes invalidate employee, analytics, and report caches. Header errors are shown before any history is created. Backend attachment metadata is migrated to `response_file`; Active Storage remains the file store. API v2.5 and backend README describe the revised contract and future module reuse.
+
+Validation: `bin/rails test` — 277 tests / 1,250 assertions, all passing; `bin/rubocop` — no offenses; `bin/brakeman --no-pager` — zero warnings. Frontend: `npm test` — 210 tests passing; `npm run typecheck`, `npm run lint`, and `npm run build` pass (125.73 kB gzip JS). `npm run e2e -- e2e/bulk-upload.spec.ts` — 2 tests passing, including authentication, a real multipart upload, the persisted correction, response CSV download containing only the invalid row, and WCAG/privacy checks. The full existing E2E suite was not repeated. Component upload tests inspect the FormData request through a fetch spy because Vitest’s jsdom adapter cannot serialize jsdom 30 Files; the browser test verifies the actual multipart round trip.

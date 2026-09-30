@@ -68,7 +68,7 @@ describe("MainLayout", () => {
       ]);
     expect(sections).toEqual([
       ["Overview", ["Dashboard", "Analytics"]],
-      ["People", ["Employees"]],
+      ["People", ["Employees", "Bulk salary corrections"]],
       ["Reports", ["Salary report"]],
     ]);
     for (const icon of nav.querySelectorAll("svg"))
